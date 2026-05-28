@@ -1,0 +1,305 @@
+/* FILE: ~/otmega/otmega_app/console/admin_frontend/src/styles/console.css */
+/* ماموریت: استایل پایه، چیدمان کنسولی و رنگ بندی عملیاتی Admin Console. */
+
+:root {
+  color: #18212f;
+  background: #f6f7f9;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+}
+
+.console-shell {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 100vh;
+}
+
+.console-sidebar {
+  background: #18212f;
+  color: #f8fafc;
+  padding: 24px;
+}
+
+.console-brand {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.console-brand-mark {
+  align-items: center;
+  background: #4fb3a3;
+  border-radius: 8px;
+  color: #08201d;
+  display: inline-flex;
+  font-weight: 800;
+  height: 44px;
+  justify-content: center;
+  width: 44px;
+}
+
+.console-brand small,
+.console-header p,
+.console-page-title p,
+.console-panel small,
+.console-panel p {
+  color: #687587;
+  margin: 0;
+}
+
+.console-sidebar small {
+  color: #b7c2d2;
+  display: block;
+}
+
+.console-nav {
+  display: grid;
+  gap: 8px;
+}
+
+.console-nav button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  color: #eef4ff;
+  cursor: pointer;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.console-nav button.active {
+  background: #f4c95d;
+  color: #1f2937;
+}
+
+.console-main {
+  padding: 28px;
+}
+
+.console-header {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  margin-bottom: 28px;
+}
+
+.console-header h1,
+.console-page-title h2 {
+  margin: 0 0 6px;
+}
+
+.console-session-card,
+.console-login-panel {
+  background: #e5f3ef;
+  border: 1px solid #b8ded5;
+  color: #185b50;
+}
+
+.console-session-card {
+  align-items: center;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 46px minmax(220px, 1fr) auto;
+  min-width: 460px;
+  padding: 10px;
+}
+
+.console-avatar {
+  border-radius: 8px;
+  height: 46px;
+  object-fit: cover;
+  width: 46px;
+}
+
+.console-avatar-fallback {
+  align-items: center;
+  background: #4fb3a3;
+  color: #08201d;
+  display: inline-flex;
+  font-weight: 800;
+  justify-content: center;
+}
+
+.console-session-details {
+  display: grid;
+  gap: 4px;
+}
+
+.console-session-details small,
+.console-login-panel small {
+  color: #4f6a66;
+}
+
+.console-session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.console-session-meta span {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(24, 91, 80, 0.14);
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.console-login-panel {
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  min-width: 420px;
+  padding: 10px;
+}
+
+.console-login-fields {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.console-login-panel input {
+  background: #ffffff;
+  border: 1px solid #b8ded5;
+  border-radius: 8px;
+  color: #18212f;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.console-login-panel button,
+.console-quiet-button {
+  border: 1px solid #185b50;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.console-login-panel button {
+  background: #185b50;
+  color: #ffffff;
+  padding: 8px 10px;
+}
+
+.console-login-panel button:disabled,
+.console-quiet-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.console-quiet-button {
+  background: #ffffff;
+  color: #185b50;
+  padding: 8px 10px;
+}
+
+.console-page {
+  display: grid;
+  gap: 18px;
+}
+
+.console-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.console-panel,
+.console-graph-panel,
+.console-table {
+  background: #ffffff;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(21, 31, 44, 0.04);
+}
+
+.console-panel {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+}
+
+.console-wide-panel {
+  grid-column: 1 / -1;
+}
+
+.console-label {
+  color: #687587;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.console-error {
+  background: #fff0ec;
+  border: 1px solid #f2b8a8;
+  border-radius: 8px;
+  color: #93351f;
+  padding: 12px 14px;
+}
+
+.console-table {
+  overflow: hidden;
+}
+
+.console-table-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1.3fr 1fr 120px;
+  padding: 13px 16px;
+}
+
+.console-table-row + .console-table-row {
+  border-top: 1px solid #e6eaf0;
+}
+
+.console-table-head {
+  background: #eef2f6;
+  color: #4b5a6d;
+  font-weight: 700;
+}
+
+.console-graph-panel {
+  height: 360px;
+}
+
+@media (max-width: 860px) {
+  .console-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .console-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .console-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .console-session-card,
+  .console-login-panel {
+    min-width: 0;
+  }
+
+  .console-session-card {
+    grid-template-columns: 46px 1fr;
+  }
+
+  .console-quiet-button {
+    grid-column: 1 / -1;
+  }
+
+  .console-login-fields {
+    grid-template-columns: 1fr;
+  }
+}

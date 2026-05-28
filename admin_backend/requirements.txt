@@ -1,0 +1,4 @@
+# FILE: ~/otmega/otmega_app/console/admin_backend/requirements.txt
+# ماموریت: وابستگی های Python لازم برای اجرای Flask/Gunicorn Admin Console.
+Flask==3.0.3
+gunicorn==22.0.0
