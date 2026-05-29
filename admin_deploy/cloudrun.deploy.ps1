@@ -26,8 +26,11 @@ gcloud run deploy otmega-console `
   --project ot-ai-advisor `
   --platform managed `
   --allow-unauthenticated `
-  --set-env-vars="CONSOLE_MODE=read_only,PRG2_SUPABASE_URL=https://db.otmega.com,APP_DATA_BUCKET_NAME=otmega-collabra-secure" `
+  --set-env-vars="CONSOLE_MODE=read_only,CONSOLE_ADVISOR_ID=20018,APP_DATA_BUCKET_NAME=otmega-collabra-secure,GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcs-signer-key" `
   --set-secrets="FLASK_SECRET_KEY=FLASK_SECRET_KEY:latest" `
   --set-secrets="FALLBACK_ADMIN_USER=FALLBACK_ADMIN_USER:latest" `
-  --set-secrets="FALLBACK_ADMIN_PASS=FALLBACK_ADMIN_PASS:latest"
+  --set-secrets="FALLBACK_ADMIN_PASS=FALLBACK_ADMIN_PASS:latest" `
+  --set-secrets="PRG2_SUPABASE_URL=PRG2_SUPABASE_URL:latest" `
+  --set-secrets="PRG2_SUPABASE_SERVICE_ROLE_KEY=PRG2_SUPABASE_SERVICE_ROLE_KEY:latest" `
+  --set-secrets="/secrets/gcs-signer-key=gcs-signer-key:latest"
 Pop-Location

@@ -12,11 +12,11 @@ export type ConsoleTab = 'dashboard' | 'runtime' | 'traces';
 
 type ConsoleRouterProps = {
   bootstrap: ConsoleBootstrap;
-  onLogin: (email: string, password: string) => Promise<void>;
   onLogout: () => Promise<void>;
+  onRelogin: () => Promise<void>;
 };
 
-export default function ConsoleRouter({ bootstrap, onLogin, onLogout }: ConsoleRouterProps) {
+export default function ConsoleRouter({ bootstrap, onLogout, onRelogin }: ConsoleRouterProps) {
   const [activeTab, setActiveTab] = useState<ConsoleTab>('dashboard');
 
   const page =
@@ -29,7 +29,7 @@ export default function ConsoleRouter({ bootstrap, onLogin, onLogout }: ConsoleR
     );
 
   return (
-    <ConsoleShell activeTab={activeTab} onLogin={onLogin} onLogout={onLogout} onTabChange={setActiveTab} session={bootstrap.session}>
+    <ConsoleShell activeTab={activeTab} onLogout={onLogout} onRelogin={onRelogin} onTabChange={setActiveTab} session={bootstrap.session}>
       {page}
     </ConsoleShell>
   );

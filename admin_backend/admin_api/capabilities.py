@@ -6,12 +6,24 @@ READ_ONLY_CAPABILITIES = (
     "console.view_session",
     "console.view_runtime_inventory",
     "console.view_trace_summary",
+    "console.view_audit",
+    "console.view_real_profile",
+    "console.view_operational_status",
 )
 
 
 def capabilities_for_actor(actor) -> list[str]:
     if actor.is_user_zero:
         return list(READ_ONLY_CAPABILITIES)
+    if actor.role in {"s_admin", "admin"}:
+        return [
+            "console.view_health",
+            "console.view_session",
+            "console.view_runtime_inventory",
+            "console.view_trace_summary",
+            "console.view_real_profile",
+            "console.view_operational_status",
+        ]
     if actor.authenticated:
         return ["console.view_health", "console.view_session"]
     return ["console.view_health"]

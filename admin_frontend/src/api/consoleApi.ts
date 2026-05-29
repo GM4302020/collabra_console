@@ -22,10 +22,17 @@ export type ConsoleSession = {
     full_name: string | null;
     title: string | null;
     avatar_url: string | null;
+    avatar_path: string | null;
+    balance: string;
+    country_code: string | null;
+    online_status: string;
+    last_typed_lang: string;
     tier: number;
     role: string;
     access_level: string;
     is_user_zero: boolean;
+    profile_source: string;
+    advisor_id: number | null;
   };
   capabilities: string[];
 };
@@ -40,6 +47,40 @@ export type ConfigDomainsResponse = {
   status: string;
   mode: string;
   domains: ConfigDomain[];
+};
+
+export type OperationalMetric = {
+  label: string;
+  value: string;
+  state: 'ok' | 'warn' | 'error' | 'neutral' | 'unknown';
+};
+
+export type OperationalLink = {
+  label: string;
+  url: string;
+};
+
+export type OperationalResource = {
+  id: string;
+  group: string;
+  name: string;
+  kind: string;
+  status: 'ok' | 'warn' | 'error' | 'unknown';
+  summary: string;
+  primary_url: string | null;
+  console_url: string | null;
+  latency_ms: number | null;
+  metrics: OperationalMetric[];
+  links: OperationalLink[];
+  checked_at: string;
+};
+
+export type OperationalResourcesResponse = {
+  status: string;
+  mode: string;
+  write_enabled: boolean;
+  timestamp: string;
+  resources: OperationalResource[];
 };
 
 async function getJson<T>(path: string): Promise<T> {
@@ -90,4 +131,8 @@ export function logoutConsole(): Promise<ConsoleSession> {
 
 export function fetchConfigDomains(): Promise<ConfigDomainsResponse> {
   return getJson<ConfigDomainsResponse>('/api/console/config/domains');
+}
+
+export function fetchOperationalResources(): Promise<OperationalResourcesResponse> {
+  return getJson<OperationalResourcesResponse>('/api/console/operations/resources');
 }

@@ -19,10 +19,17 @@ class ConsoleActor:
     full_name: str | None
     title: str | None
     avatar_url: str | None
+    avatar_path: str | None
+    balance: str
+    country_code: str | None
+    online_status: str
+    last_typed_lang: str
     tier: int
     role: str
     access_level: str
     is_user_zero: bool
+    profile_source: str
+    advisor_id: int | None
 
 
 def _decode_unverified_jwt_payload(token: str) -> dict:
@@ -53,10 +60,17 @@ def _fallback_actor_profile(email: str) -> dict:
         "full_name": os.environ.get("CONSOLE_ADMIN_FULL_NAME", "System Root"),
         "title": os.environ.get("CONSOLE_ADMIN_TITLE", "User Zero control owner"),
         "avatar_url": os.environ.get("CONSOLE_ADMIN_AVATAR_URL"),
+        "avatar_path": os.environ.get("CONSOLE_ADMIN_AVATAR_PATH"),
+        "balance": os.environ.get("CONSOLE_ADMIN_BALANCE", "0.00"),
+        "country_code": os.environ.get("CONSOLE_ADMIN_COUNTRY_CODE", "us"),
+        "online_status": os.environ.get("CONSOLE_ADMIN_ONLINE_STATUS", "online"),
+        "last_typed_lang": os.environ.get("CONSOLE_ADMIN_LAST_TYPED_LANG", "en"),
         "tier": _to_int(os.environ.get("CONSOLE_ADMIN_TIER"), 5),
         "role": os.environ.get("CONSOLE_ADMIN_ROLE", "user_zero"),
         "access_level": os.environ.get("CONSOLE_ADMIN_ACCESS_LEVEL", "User Zero"),
         "is_user_zero": True,
+        "profile_source": "fallback",
+        "advisor_id": _to_int(os.environ.get("CONSOLE_ADVISOR_ID"), 20018),
     }
 
 
@@ -90,10 +104,17 @@ def _actor_from_session() -> ConsoleActor | None:
         full_name=profile.get("full_name"),
         title=profile.get("title"),
         avatar_url=profile.get("avatar_url"),
+        avatar_path=profile.get("avatar_path"),
+        balance=str(profile.get("balance") or "0.00"),
+        country_code=profile.get("country_code"),
+        online_status=profile.get("online_status") or "offline",
+        last_typed_lang=profile.get("last_typed_lang") or "en",
         tier=_to_int(profile.get("tier"), 0),
         role=profile.get("role") or "anonymous",
         access_level=profile.get("access_level") or profile.get("role") or "anonymous",
         is_user_zero=bool(profile.get("is_user_zero")),
+        profile_source=profile.get("profile_source") or "session",
+        advisor_id=_to_int(profile.get("advisor_id"), 0) or None,
     )
 
 
@@ -120,8 +141,15 @@ def resolve_actor(request: Request) -> ConsoleActor:
         full_name=user_metadata.get("full_name") or user_metadata.get("name") or payload.get("full_name"),
         title=user_metadata.get("title") or payload.get("title"),
         avatar_url=user_metadata.get("avatar_url") or payload.get("avatar_url"),
+        avatar_path=user_metadata.get("avatar_path") or payload.get("avatar_path"),
+        balance=str(user_metadata.get("balance") or payload.get("balance") or "0.00"),
+        country_code=user_metadata.get("country_code") or payload.get("country_code"),
+        online_status=user_metadata.get("online_status") or payload.get("online_status") or "offline",
+        last_typed_lang=user_metadata.get("last_typed_lang") or payload.get("last_typed_lang") or "en",
         tier=_to_int(user_metadata.get("tier") or payload.get("tier"), 0),
         role=role,
         access_level=app_metadata.get("access_level") or payload.get("access_level") or role,
         is_user_zero=is_user_zero,
+        profile_source="bearer",
+        advisor_id=_to_int(payload.get("advisor_id") or user_metadata.get("advisor_id"), 0) or None,
     )

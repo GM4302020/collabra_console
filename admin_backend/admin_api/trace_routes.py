@@ -5,16 +5,19 @@ import json
 from datetime import datetime, timezone
 
 from flask import Blueprint, Response, jsonify
+from admin_api.guards import require_capability
 
 trace_bp = Blueprint("console_trace", __name__)
 
 
 @trace_bp.get("/api/console/traces/runs")
+@require_capability("console.view_trace_summary")
 def trace_runs():
     return jsonify({"status": "ok", "mode": "read_only", "runs": []})
 
 
 @trace_bp.get("/api/console/traces/stream")
+@require_capability("console.view_trace_summary")
 def trace_stream():
     event = {
         "event": "heartbeat",

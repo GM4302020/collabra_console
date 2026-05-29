@@ -10,3 +10,4 @@ This folder contains the first read-only milestone of the web-only Admin Console
 - `admin_deploy/`: PowerShell deployment helpers.
 
 Milestone 1 is intentionally read-only. It exposes health, session, runtime inventory, trace placeholder, and audit placeholder surfaces without database mutation or emergency controls.
+

@@ -8,6 +8,7 @@ from flask import Flask
 from admin_api.audit_routes import audit_bp
 from admin_api.config_routes import config_bp
 from admin_api.health_routes import health_bp
+from admin_api.operational_routes import operational_bp
 from admin_api.session_routes import session_bp
 from admin_api.static_routes import register_static_routes
 from admin_api.trace_routes import trace_bp
@@ -25,6 +26,7 @@ def create_app() -> Flask:
     app.register_blueprint(health_bp)
     app.register_blueprint(session_bp)
     app.register_blueprint(config_bp)
+    app.register_blueprint(operational_bp)
     app.register_blueprint(trace_bp)
     app.register_blueprint(audit_bp)
     register_static_routes(app)

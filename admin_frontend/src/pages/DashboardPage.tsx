@@ -3,6 +3,7 @@
 
 import type { ConsoleBootstrap } from '../App';
 import HealthSummary from '../components/monitoring/HealthSummary';
+import OperationalResources from '../components/monitoring/OperationalResources';
 
 type DashboardPageProps = {
   bootstrap: ConsoleBootstrap;
@@ -17,6 +18,7 @@ export default function DashboardPage({ bootstrap }: DashboardPageProps) {
       </div>
       {bootstrap.error ? <div className="console-error">{bootstrap.error}</div> : null}
       <HealthSummary health={bootstrap.health} loading={bootstrap.loading} session={bootstrap.session} />
+      <OperationalResources enabled={Boolean(bootstrap.session?.capabilities.includes('console.view_operational_status'))} />
       <article className="console-panel console-wide-panel">
         <span className="console-label">Guardrail</span>
         <strong>Read-only mode is enforced for milestone 1.</strong>
