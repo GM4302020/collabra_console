@@ -42,6 +42,19 @@ body {
   margin: 0;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
 button {
   font: inherit;
 }
@@ -81,7 +94,9 @@ button {
 .console-shell {
   display: grid;
   grid-template-columns: var(--console-sidebar-width, 284px) minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .console-sidebar {
@@ -89,6 +104,8 @@ button {
   color: var(--console-sidebar-text);
   display: flex;
   flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
   min-width: 0;
   overflow: hidden;
   padding: 22px;
@@ -249,8 +266,9 @@ button {
   align-content: start;
   display: grid;
   gap: 8px;
+  flex: 0 0 auto;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding-right: 2px;
 }
 
@@ -287,6 +305,7 @@ button {
 .console-sidebar-bottom {
   border-top: 1px solid rgba(255, 255, 255, 0.14);
   display: grid;
+  flex: 0 0 auto;
   gap: 8px;
   margin-top: auto;
   padding-top: 14px;
@@ -345,21 +364,58 @@ button {
 
 .console-main {
   background: var(--console-bg);
-  padding: 28px;
+  display: grid;
+  grid-template-rows: 76px minmax(0, 1fr) 34px;
+  height: 100vh;
+  height: 100dvh;
   min-width: 0;
+  overflow: hidden;
 }
 
 .console-header {
   align-items: center;
+  border-bottom: 1px solid var(--console-border);
   display: flex;
   gap: 18px;
   justify-content: space-between;
-  margin-bottom: 28px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 28px;
+  white-space: nowrap;
 }
 
 .console-header h1,
 .console-page-title h2 {
   margin: 0 0 6px;
+}
+
+.console-header h1 {
+  margin: 0;
+}
+
+.console-header-title {
+  align-items: baseline;
+  display: flex;
+  gap: 16px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.console-header-title h1,
+.console-header-title p,
+.console-header-status span,
+.console-footer span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.console-header-title h1 {
+  flex: 0 0 auto;
+}
+
+.console-header-title p {
+  min-width: 0;
 }
 
 .console-header-status,
@@ -374,7 +430,27 @@ button {
   border: 1px solid var(--console-border);
   border-radius: 999px;
   color: var(--console-muted);
+  flex: 0 0 auto;
   padding: 8px 12px;
+}
+
+.console-content {
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 28px;
+}
+
+.console-footer {
+  align-items: center;
+  border-top: 1px solid var(--console-border);
+  color: var(--console-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 16px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 28px;
+  white-space: nowrap;
 }
 
 .console-icon-text-button {
@@ -726,6 +802,444 @@ button {
 
 .console-graph-panel {
   height: 360px;
+  overflow: hidden;
+  position: relative;
+}
+
+.console-trace-workbench {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 520px;
+}
+
+.trace-workbench-topbar {
+  align-items: center;
+  background: var(--console-panel);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px var(--console-shadow);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(360px, 0.7fr) minmax(0, 1fr);
+  padding: 10px;
+}
+
+.trace-scenario-controls,
+.trace-node-strip {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trace-scenario-controls input,
+.trace-scenario-controls select {
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  color: var(--console-text);
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.trace-scenario-controls input {
+  flex: 1 1 190px;
+}
+
+.trace-scenario-controls select {
+  flex: 0 1 180px;
+}
+
+.trace-node-strip {
+  justify-content: flex-end;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.trace-node-strip button {
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 999px;
+  color: var(--console-text);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 12px;
+  max-width: 160px;
+  overflow: hidden;
+  padding: 7px 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-canvas-panel {
+  height: 620px;
+  min-width: 0;
+}
+
+.console-graph-toolbar {
+  background: color-mix(in srgb, var(--console-panel) 88%, transparent);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px var(--console-shadow);
+  display: inline-flex;
+  gap: 4px;
+  left: 14px;
+  padding: 4px;
+  position: absolute;
+  top: 14px;
+  z-index: 15;
+}
+
+.console-graph-toolbar button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--console-text);
+  cursor: pointer;
+  display: inline-flex;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+
+.console-graph-toolbar button:hover {
+  background: var(--console-panel-soft);
+}
+
+.console-graph-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.console-graph-panel .react-flow,
+.console-graph-panel .react-flow__renderer {
+  background: var(--console-panel);
+  color: var(--console-text);
+}
+
+.console-graph-panel .react-flow__node-routine {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--console-text);
+  padding: 0;
+}
+
+.trace-routine-node {
+  align-items: center;
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 22px var(--console-shadow);
+  color: var(--console-text);
+  display: grid;
+  gap: 3px;
+  min-height: 58px;
+  min-width: 178px;
+  padding: 10px 14px;
+  text-align: center;
+}
+
+.trace-node-status {
+  border: 1px solid var(--console-border);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 800;
+  justify-self: center;
+  line-height: 1;
+  padding: 3px 7px;
+  text-transform: uppercase;
+}
+
+.trace-muted-title {
+  color: var(--console-muted);
+  font-style: italic;
+}
+
+.trace-routine-node.selected {
+  border-color: var(--console-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--console-accent) 35%, transparent);
+}
+
+.trace-routine-node strong,
+.trace-routine-node small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-routine-node small {
+  color: var(--console-muted);
+  font-size: 11px;
+}
+
+.console-graph-panel .react-flow__node-default {
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  color: var(--console-text);
+}
+
+.console-graph-panel .react-flow__handle {
+  background: var(--console-text);
+  border-color: var(--console-panel);
+  height: 9px;
+  width: 9px;
+}
+
+.console-graph-panel .trace-handle-source {
+  background: var(--console-green);
+}
+
+.console-graph-panel .trace-handle-target {
+  background: var(--console-accent);
+}
+
+.console-graph-panel .trace-handle-top.trace-handle-source {
+  left: 42%;
+}
+
+.console-graph-panel .trace-handle-top.trace-handle-target {
+  left: 58%;
+}
+
+.console-graph-panel .trace-handle-bottom.trace-handle-source {
+  left: 42%;
+}
+
+.console-graph-panel .trace-handle-bottom.trace-handle-target {
+  left: 58%;
+}
+
+.console-graph-panel .trace-handle-left.trace-handle-source {
+  top: 42%;
+}
+
+.console-graph-panel .trace-handle-left.trace-handle-target {
+  top: 58%;
+}
+
+.console-graph-panel .trace-handle-right.trace-handle-source {
+  top: 42%;
+}
+
+.console-graph-panel .trace-handle-right.trace-handle-target {
+  top: 58%;
+}
+
+.console-graph-panel .react-flow__edge-path {
+  stroke: var(--console-muted);
+  stroke-width: 2;
+}
+
+.trace-edge-label {
+  background: var(--console-panel);
+  border: 1px solid var(--console-border);
+  border-radius: 999px;
+  box-shadow: 0 4px 12px var(--console-shadow);
+  color: var(--console-text);
+  font-size: 11px;
+  font-weight: 800;
+  max-width: 140px;
+  overflow: hidden;
+  padding: 4px 8px;
+  pointer-events: all;
+  position: absolute;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.console-graph-panel .react-flow__controls {
+  box-shadow: 0 4px 18px var(--console-shadow);
+}
+
+.console-graph-panel .react-flow__controls-button {
+  background: var(--console-panel);
+  border-bottom-color: var(--console-border);
+  color: var(--console-text);
+}
+
+.console-graph-panel .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.console-graph-panel .react-flow__attribution {
+  background: color-mix(in srgb, var(--console-panel) 80%, transparent);
+  color: var(--console-muted);
+}
+
+.trace-context-menu {
+  background: var(--console-panel);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px var(--console-shadow);
+  display: grid;
+  gap: 8px;
+  min-width: 190px;
+  padding: 10px;
+  position: fixed;
+  z-index: 40;
+}
+
+.trace-context-menu-wide {
+  width: 280px;
+}
+
+.trace-context-menu input,
+.trace-property-grid input,
+.trace-property-grid textarea {
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  color: var(--console-text);
+  min-width: 0;
+  padding: 9px 10px;
+  width: 100%;
+}
+
+.trace-context-menu button,
+.trace-properties-panel header button,
+.trace-properties-tabs button {
+  align-items: center;
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  color: var(--console-text);
+  cursor: pointer;
+  display: inline-flex;
+  gap: 6px;
+  justify-content: center;
+  padding: 9px 10px;
+}
+
+.trace-context-menu button:hover,
+.trace-properties-panel header button:hover,
+.trace-properties-tabs button.active {
+  background: var(--console-accent);
+  color: var(--console-accent-text);
+}
+
+.trace-context-menu > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-menu-template-grid {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.trace-menu-template-grid button {
+  font-size: 12px;
+  justify-content: flex-start;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-properties-panel {
+  background: var(--console-panel);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  box-shadow: 0 18px 46px rgba(8, 20, 36, 0.24);
+  display: grid;
+  gap: 16px;
+  max-height: calc(100% - 32px);
+  overflow: auto;
+  padding: 14px;
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  width: min(420px, calc(100% - 32px));
+  z-index: 35;
+}
+
+.trace-properties-panel.pinned {
+  border-color: var(--console-accent);
+}
+
+.trace-properties-panel header {
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.trace-properties-panel header div,
+.trace-property-grid {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trace-properties-panel header strong,
+.trace-properties-panel header small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-properties-tabs {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.trace-properties-tabs button {
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-property-grid label,
+.trace-check-row {
+  display: grid;
+  gap: 5px;
+}
+
+.trace-check-row {
+  align-items: center;
+  display: flex;
+}
+
+.trace-check-row input {
+  width: auto;
+}
+
+.trace-property-grid label span,
+.trace-live-card small,
+.trace-empty-selection small {
+  color: var(--console-muted);
+}
+
+.trace-live-card,
+.trace-empty-selection {
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.trace-live-card {
+  grid-template-columns: 20px minmax(0, 1fr);
+}
+
+.trace-live-card small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .console-sidebar-toggle {
@@ -954,11 +1468,14 @@ button {
 
 @media (max-width: 860px) {
   .console-shell {
+    height: 100%;
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .console-sidebar {
-    min-height: auto;
+    height: auto;
+    max-height: 42vh;
   }
 
   .console-sidebar-resizer {
@@ -973,9 +1490,39 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .console-trace-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .trace-workbench-topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .trace-node-strip {
+    justify-content: flex-start;
+  }
+
+  .trace-canvas-panel {
+    height: 460px;
+  }
+
   .console-header {
     align-items: stretch;
-    flex-direction: column;
+    gap: 10px;
+    padding: 0 18px;
+  }
+
+  .console-main {
+    grid-template-rows: 72px minmax(0, 1fr) 34px;
+    height: 100%;
+  }
+
+  .console-content {
+    padding: 18px;
+  }
+
+  .console-footer {
+    padding: 0 18px;
   }
 
   .console-session-card,

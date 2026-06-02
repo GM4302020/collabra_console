@@ -150,26 +150,37 @@ def _check_gcs() -> dict:
     summary = "Bucket name is configured; metadata probe is not available."
     location = "not checked"
     storage_class = "not checked"
+    signer_email = "unknown"
     try:
+        from google.api_core.exceptions import Forbidden, NotFound
         from google.cloud import storage
 
         client = storage.Client()
+        credentials = getattr(client, "_credentials", None)
+        signer_email = getattr(credentials, "service_account_email", None) or "runtime credential"
         bucket = client.bucket(bucket_name)
-        if bucket.exists(client=client):
+        try:
             bucket.reload(client=client)
-            status = "ok"
-            summary = "GCS bucket metadata is reachable."
-            location = bucket.location or "unknown"
-            storage_class = bucket.storage_class or "unknown"
-        else:
+        except Forbidden:
+            status = "warn"
+            summary = "GCS bucket exists in configuration, but the current signer cannot read bucket metadata."
+            location = "permission denied"
+            storage_class = "permission denied"
+        except NotFound:
             status = "error"
             summary = "GCS bucket was not found with current credentials."
             location = "missing"
             storage_class = "missing"
+        else:
+            status = "ok"
+            summary = "GCS bucket metadata is reachable."
+            location = bucket.location or "unknown"
+            storage_class = bucket.storage_class or "unknown"
     except Exception as exc:
         status = "error"
         summary = f"GCS metadata probe failed: {type(exc).__name__}."
 
+    bucket_browser_url = f"https://console.cloud.google.com/storage/browser/{bucket_name}?project={PROJECT_ID}"
     return _resource(
         resource_id="gcs-collabra-secure",
         group="Storage",
@@ -178,15 +189,16 @@ def _check_gcs() -> dict:
         status=status,
         summary=summary,
         primary_url="https://files.otmega.com",
-        console_url=f"https://console.cloud.google.com/storage/browser/_details/{bucket_name}?project={PROJECT_ID}",
+        console_url=bucket_browser_url,
         latency_ms=_elapsed_ms(start),
         metrics=[
             _metric("bucket", bucket_name),
             _metric("location", location, status if location != "not checked" else "warn"),
             _metric("storage class", storage_class, status if storage_class != "not checked" else "warn"),
+            _metric("credential", signer_email, "neutral"),
         ],
         links=[
-            _link("Bucket browser", f"https://console.cloud.google.com/storage/browser/{bucket_name}?project={PROJECT_ID}"),
+            _link("Bucket browser", bucket_browser_url),
             _link("Files proxy", "https://files.otmega.com"),
         ],
     )

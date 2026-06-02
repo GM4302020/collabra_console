@@ -220,7 +220,7 @@ export default function ConsoleShell({ activeTab, children, onLogout, onRelogin,
       </aside>
       <main className="console-main">
         <header className="console-header">
-          <div>
+          <div className="console-header-title">
             <h1>console.otmega.com</h1>
             <p>Control plane shell for Collabra operational monitoring.</p>
           </div>
@@ -229,7 +229,14 @@ export default function ConsoleShell({ activeTab, children, onLogout, onRelogin,
             <span>Live probes refresh every 30s</span>
           </div>
         </header>
-        {children}
+        <section className="console-content" aria-label="Console workspace">
+          {children}
+        </section>
+        <footer className="console-footer">
+          <span>Read-only control plane</span>
+          <span>{actor?.email || 'No active actor'}</span>
+          <span>{actor?.advisor_id ? `advisor ${actor.advisor_id}` : 'advisor pending'}</span>
+        </footer>
       </main>
     </div>
   );
