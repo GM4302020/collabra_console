@@ -1,4 +1,7 @@
-﻿# Logs
+# FILE: ~/otmega/otmega_app/console/.gitignore
+# ماموریت: حذف خروجی های build، cache، secret محلی و artifactهای تولیدی Admin Console از git.
+
+# Logs
 logs
 *.log
 npm-debug.log*
@@ -28,3 +31,4 @@ env/
 .env
 .env.local
 tree.txt
+test-results/
