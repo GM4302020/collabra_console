@@ -7,8 +7,9 @@ import ConsoleShell from '../components/shell/ConsoleShell';
 import DashboardPage from '../pages/DashboardPage';
 import RuntimeSettingsPage from '../pages/RuntimeSettingsPage';
 import TraceViewerPage from '../pages/TraceViewerPage';
+import UiTextsMatrixPage from '../pages/UiTextsMatrixPage';
 
-export type ConsoleTab = 'dashboard' | 'runtime' | 'traces';
+export type ConsoleTab = 'dashboard' | 'runtime' | 'traces' | 'uiTexts';
 
 type ConsoleRouterProps = {
   bootstrap: ConsoleBootstrap;
@@ -24,6 +25,8 @@ export default function ConsoleRouter({ bootstrap, onLogout, onRelogin }: Consol
       <RuntimeSettingsPage domains={bootstrap.domains} />
     ) : activeTab === 'traces' ? (
       <TraceViewerPage />
+    ) : activeTab === 'uiTexts' ? (
+      <UiTextsMatrixPage />
     ) : (
       <DashboardPage bootstrap={bootstrap} />
     );

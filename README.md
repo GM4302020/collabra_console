@@ -11,12 +11,14 @@ This folder contains the web-only Admin Console control plane for Collabra.
 
 The current milestone is production-safe and read-only. It exposes health, session, real MUPO profile lookup, runtime inventory, operational probes, Trace Viewer sandbox/workbench, and audit placeholder surfaces without database mutation, query runner, emergency controls, or writes to Collabra.
 
-Official Cloud Run deployment from PowerShell:
+Official Cloud Run deployment from PowerShell. This is the supported validation path for the console; do not use a local dev server for acceptance checks.
 
 ```powershell
 Set-Location C:\Projects\otmega\otmega_app\console\admin_deploy
 .\cloudrun.deploy.ps1
 ```
+
+The deploy script verifies the active `gcloud` account, required Secret Manager entries, frontend production build, backend tests, backend Python compilation, and the attached `static_frontend/index.html` before publishing Cloud Run.
 
 Source structure, excluding generated folders and build artifacts:
 
@@ -44,7 +46,8 @@ console/
 |   |   `-- trace_routes.py
 |   `-- tests/
 |       |-- test_health.py
-|       `-- test_session.py
+|       |-- test_session.py
+|       `-- test_ui_texts_matrix.py
 |-- admin_deploy/
 |   |-- cloudrun.deploy.ps1
 |   `-- firebase-hosting.deploy.ps1
@@ -76,7 +79,8 @@ console/
         |-- pages/
         |   |-- DashboardPage.tsx
         |   |-- RuntimeSettingsPage.tsx
-        |   `-- TraceViewerPage.tsx
+        |   |-- TraceViewerPage.tsx
+        |   `-- UiTextsMatrixPage.tsx
         |-- routes/
         |   `-- ConsoleRouter.tsx
         `-- styles/

@@ -12,6 +12,7 @@ import {
   Settings,
   SlidersHorizontal,
   Sun,
+  TableProperties,
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
@@ -38,6 +39,7 @@ const SIDEBAR_COLLAPSED_MAX = 104;
 const tabs: Array<{ key: ConsoleTab; label: string; icon: LucideIcon }> = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'runtime', label: 'Runtime Settings', icon: SlidersHorizontal },
+  { key: 'uiTexts', label: 'UI Texts Matrix', icon: TableProperties },
   { key: 'traces', label: 'Trace Viewer', icon: GitBranch },
 ];
 

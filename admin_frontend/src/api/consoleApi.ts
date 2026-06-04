@@ -83,6 +83,92 @@ export type OperationalResourcesResponse = {
   resources: OperationalResource[];
 };
 
+export type UiTextsMatrixRow = {
+  key: string;
+  category: string;
+  subcategory: string;
+  values: Record<string, string>;
+  missing_languages: string[];
+  orphan: boolean;
+};
+
+export type UiTextsLanguageSummary = {
+  code: string;
+  key_count: number;
+  runtime_key_count: number | null;
+  fallback_key_count: number;
+  missing_from_english: string[];
+  missing_from_language: string[];
+  runtime_source: string;
+  runtime_updated_at: string | null;
+  source_file: string;
+};
+
+export type UiTextsMatrix = {
+  languages: string[];
+  rows: UiTextsMatrixRow[];
+  language_summaries: UiTextsLanguageSummary[];
+  source: string;
+  write_enabled: boolean;
+  gcs_enabled: boolean;
+  ai_suggestions_enabled: boolean;
+};
+
+export type UiTextsMatrixResponse = {
+  status: string;
+  matrix: UiTextsMatrix;
+};
+
+export type UiTextsPatchFile = {
+  language: string;
+  filename: string;
+  content: string;
+};
+
+export type UiTextsPatchResponse = {
+  status: string;
+  write_enabled: boolean;
+  sql_patch: string;
+  python_files: UiTextsPatchFile[];
+  changed_language_count: number;
+  changed_key_count: number;
+};
+
+export type UiTextsLlmOption = {
+  key: string;
+  label: string;
+  provider: string;
+  product: string;
+  model: string;
+  api_key_env: string;
+  transport: string;
+  enabled: boolean;
+  secret_available: boolean;
+};
+
+export type UiTextsLlmOptionsResponse = {
+  status: string;
+  options: UiTextsLlmOption[];
+  active_option_key: string;
+  source: string;
+};
+
+export type UiTextsAiSuggestion = {
+  key: string;
+  language: string;
+  text: string;
+};
+
+export type UiTextsAiSuggestionsResponse = {
+  status: string;
+  model_option_key: string;
+  provider: string;
+  model: string;
+  requested_count: number;
+  suggested_count: number;
+  suggestions: UiTextsAiSuggestion[];
+};
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path, {
     credentials: 'include',
@@ -135,4 +221,28 @@ export function fetchConfigDomains(): Promise<ConfigDomainsResponse> {
 
 export function fetchOperationalResources(): Promise<OperationalResourcesResponse> {
   return getJson<OperationalResourcesResponse>('/api/console/operations/resources');
+}
+
+export function fetchUiTextsMatrix(): Promise<UiTextsMatrixResponse> {
+  return getJson<UiTextsMatrixResponse>('/api/console/ui-texts/matrix');
+}
+
+export function generateUiTextsPatch(payload: {
+  changes: Record<string, Record<string, string>>;
+  export_languages?: string[];
+  matrix: Record<string, Record<string, string>>;
+  ordered_keys: string[];
+}): Promise<UiTextsPatchResponse> {
+  return postJson<UiTextsPatchResponse>('/api/console/ui-texts/patch', payload);
+}
+
+export function fetchUiTextsLlmOptions(): Promise<UiTextsLlmOptionsResponse> {
+  return getJson<UiTextsLlmOptionsResponse>('/api/console/ui-texts/llm-options');
+}
+
+export function generateUiTextsAiSuggestions(payload: {
+  model_option_key: string;
+  cells: Array<{ key: string; language: string; english_text: string; current_text?: string }>;
+}): Promise<UiTextsAiSuggestionsResponse> {
+  return postJson<UiTextsAiSuggestionsResponse>('/api/console/ui-texts/ai-suggestions', payload);
 }
