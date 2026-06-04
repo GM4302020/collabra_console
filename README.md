@@ -9,7 +9,7 @@ This folder contains the web-only Admin Console control plane for Collabra.
 - `admin_backend/`: Flask/Gunicorn API and static shell host for Cloud Run.
 - `admin_deploy/`: PowerShell deployment helpers.
 
-The current milestone is production-safe and read-only. It exposes health, session, real MUPO profile lookup, runtime inventory, operational probes, Trace Viewer sandbox/workbench, and audit placeholder surfaces without database mutation, query runner, emergency controls, or writes to Collabra.
+The current milestone is production-safe with tightly scoped User Zero writes for the UI Texts Matrix. It exposes health, session, real MUPO profile lookup, runtime inventory, operational probes, Trace Viewer sandbox/workbench, audit placeholder surfaces, AI-assisted UI text suggestions, manual SQL/Python exports, and controlled direct apply for UI text language payloads.
 
 Official Cloud Run deployment from PowerShell. This is the supported validation path for the console; do not use a local dev server for acceptance checks.
 
@@ -19,6 +19,13 @@ Set-Location C:\Projects\otmega\otmega_app\console\admin_deploy
 ```
 
 The deploy script verifies the active `gcloud` account, required Secret Manager entries, frontend production build, backend tests, backend Python compilation, and the attached `static_frontend/index.html` before publishing Cloud Run.
+
+UI Texts Matrix direct apply:
+
+- Button: `Apply DB + Python files`
+- Capability: `console.apply_ui_texts_matrix`, available only to User Zero.
+- Behavior: confirms the operation, writes final `.py` files to the configured UI texts path, updates `config_domain_registry` for changed languages through the backend service role, then reloads the matrix from the runtime source.
+- Manual exports remain available through `Generate SQL/Python patch` and `Generate final .py files`.
 
 Source structure, excluding generated folders and build artifacts:
 

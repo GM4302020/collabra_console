@@ -1546,6 +1546,44 @@ button {
   }
 }
 
+.wave-dots {
+  align-items: center;
+  display: inline-flex;
+  gap: 3px;
+  height: 16px;
+}
+
+.wave-dots i {
+  animation: consoleWaveDot 900ms ease-in-out infinite;
+  background: currentColor;
+  border-radius: 999px;
+  display: block;
+  height: 5px;
+  width: 5px;
+}
+
+.wave-dots i:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.wave-dots i:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+@keyframes consoleWaveDot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.45;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+
 .ui-texts-toolbar,
 .ui-texts-add-row,
 .ui-texts-language-strip,
@@ -1673,6 +1711,15 @@ button {
 .ui-texts-export-summary {
   background: color-mix(in srgb, var(--console-accent) 22%, var(--console-panel));
   border: 1px solid var(--console-accent);
+  border-radius: 999px;
+  color: var(--console-text);
+  font-weight: 700;
+  padding: 7px 11px;
+}
+
+.ui-texts-apply-status {
+  background: color-mix(in srgb, var(--console-green) 18%, var(--console-panel));
+  border: 1px solid color-mix(in srgb, var(--console-green) 70%, var(--console-border));
   border-radius: 999px;
   color: var(--console-text);
   font-weight: 700;

@@ -84,6 +84,54 @@ def test_ui_texts_patch_exports_python_files_without_changes(monkeypatch):
     assert "/ui_texts/fa.py" in payload["python_files"][0]["content"]
 
 
+def test_ui_texts_apply_requires_user_zero_capability():
+    app = create_app()
+    client = app.test_client()
+
+    response = client.post("/api/console/ui-texts/apply", json={})
+
+    assert response.status_code == 403
+
+
+def test_ui_texts_apply_writes_python_and_registry_payload(monkeypatch, tmp_path):
+    template_dir = tmp_path / "ui_texts"
+    template_dir.mkdir()
+    (template_dir / "en.py").write_text(
+        "# FILE: ~/otmega/otmega_app/backend/advisor/settings/ui_texts/en.py\n"
+        "UI_TEXTS = {\n"
+        "    \"MAIN_TITLE\": \"Main\",\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_routes, "UI_TEXTS_DIR", template_dir)
+    applied = {}
+
+    def fake_apply(language, values):
+        applied[language] = values
+        return 1
+
+    monkeypatch.setattr(config_routes, "_apply_ui_texts_registry_payload", fake_apply)
+    app = create_app()
+    client = app.test_client()
+    _login_user_zero(client, monkeypatch)
+
+    response = client.post(
+        "/api/console/ui-texts/apply",
+        json={
+            "changes": {"fa": {"MAIN_TITLE": "اصلی"}},
+            "matrix": {"fa": {"MAIN_TITLE": "اصلی"}},
+            "ordered_keys": ["MAIN_TITLE"],
+        },
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["write_enabled"] is True
+    assert payload["applied_languages"] == ["fa"]
+    assert applied["fa"] == {"MAIN_TITLE": "اصلی"}
+    assert '"MAIN_TITLE": "اصلی",' in (template_dir / "fa.py").read_text(encoding="utf-8")
+
+
 def test_render_python_file_preserves_english_template_comments(monkeypatch, tmp_path):
     template_dir = tmp_path / "ui_texts"
     template_dir.mkdir()
@@ -166,6 +214,54 @@ def test_ui_texts_ai_suggestions_apply_provider_response(monkeypatch):
     assert payload["requested_count"] == 1
     assert payload["suggested_count"] == 1
     assert payload["suggestions"][0]["text"] == "سلام"
+
+
+def test_ui_texts_ai_suggestions_returns_provider_timeout_message(monkeypatch):
+    app = create_app()
+    client = app.test_client()
+    _login_user_zero(client, monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY_25", "test-key")
+    monkeypatch.setattr(config_routes, "_fetch_wf1_llm_payload", lambda: None)
+    monkeypatch.setattr(
+        config_routes,
+        "_call_ui_texts_llm",
+        lambda _option, _prompt: (_ for _ in ()).throw(RuntimeError("LLM provider timeout. Try fewer cells or another model.")),
+    )
+
+    response = client.post(
+        "/api/console/ui-texts/ai-suggestions",
+        json={
+            "model_option_key": "gemini_25_flash_lite",
+            "cells": [{"key": "HELLO", "language": "fa", "english_text": "Hello", "current_text": ""}],
+        },
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 502
+    assert "LLM provider timeout" in payload["message"]
+
+
+def test_ui_texts_ai_suggestions_rejects_large_batches(monkeypatch):
+    app = create_app()
+    client = app.test_client()
+    _login_user_zero(client, monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY_25", "test-key")
+    monkeypatch.setattr(config_routes, "_fetch_wf1_llm_payload", lambda: None)
+
+    response = client.post(
+        "/api/console/ui-texts/ai-suggestions",
+        json={
+            "model_option_key": "gemini_25_flash_lite",
+            "cells": [
+                {"key": f"HELLO_{index}", "language": "fa", "english_text": "Hello", "current_text": ""}
+                for index in range(31)
+            ],
+        },
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 400
+    assert "At most 30 cells" in payload["message"]
 
 
 def test_ui_texts_matrix_can_load_packaged_language_assets(monkeypatch, tmp_path):

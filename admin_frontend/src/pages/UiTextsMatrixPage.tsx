@@ -1,9 +1,10 @@
 // FILE: ~/otmega/otmega_app/console/admin_frontend/src/pages/UiTextsMatrixPage.tsx
 // ماموریت: صفحه spreadsheet کنسولی برای مشاهده، ویرایش موقت و خروجی گرفتن از کلیدهای UI Texts.
 
-import { CheckSquare, Download, Eye, EyeOff, FileCode2, FileSpreadsheet, Loader2, Plus, RefreshCw, Search, Sparkles, Trash2, WrapText } from 'lucide-react';
+import { CheckSquare, Database, Download, Eye, EyeOff, FileCode2, FileSpreadsheet, Loader2, Plus, RefreshCw, Search, Sparkles, Trash2, WrapText } from 'lucide-react';
 import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from 'react';
 import {
+  applyUiTextsMatrix,
   fetchUiTextsMatrix,
   fetchUiTextsLlmOptions,
   generateUiTextsAiSuggestions,
@@ -18,6 +19,8 @@ const KEY_COLUMN = '__key__';
 const DEFAULT_KEY_WIDTH = 320;
 const DEFAULT_EN_WIDTH = 340;
 const DEFAULT_LANGUAGE_WIDTH = 300;
+const AI_FAST_CHUNK_SIZE = 12;
+const AI_PRO_CHUNK_SIZE = 6;
 const KEY_PATTERN = /^[A-Z0-9_]+$/;
 
 type MatrixValues = Record<string, Record<string, string>>;
@@ -104,6 +107,8 @@ export default function UiTextsMatrixPage() {
   const [aiStatus, setAiStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [applyStatus, setApplyStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function loadMatrix() {
@@ -354,30 +359,104 @@ export default function UiTextsMatrixPage() {
     }
   }
 
+  async function applyMatrixDirectly() {
+    if (!matrix || changedCellCount === 0) {
+      return;
+    }
+    const changedLanguages = Object.keys(changes).sort();
+    const confirmMessage = [
+      'Apply UI texts directly?',
+      '',
+      `Changed cells: ${changedCellCount}`,
+      `Languages: ${changedLanguages.join(', ')}`,
+      '',
+      'This will write final Python files in the application UI texts path and update config_domain_registry for the changed languages.',
+      'Continue?',
+    ].join('\n');
+    if (!window.confirm(confirmMessage)) {
+      setApplyStatus('Direct apply cancelled.');
+      return;
+    }
+
+    setApplying(true);
+    setApplyStatus(`Applying ${changedCellCount} changed cells...`);
+    setError(null);
+    try {
+      const response = await applyUiTextsMatrix({ changes, matrix: values, ordered_keys: orderedKeys });
+      setApplyStatus(`Applied ${response.applied_language_count} languages. Reloading matrix...`);
+      await loadMatrix();
+      setApplyStatus(`Applied and refreshed: ${response.applied_languages.join(', ')}`);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Unable to apply UI texts directly.');
+      setApplyStatus(null);
+    } finally {
+      setApplying(false);
+    }
+  }
+
   async function applyAiSuggestions(cells: AiCell[], label: string) {
     if (!selectedLlmKey || cells.length === 0) {
       return;
     }
     const selectedOption = llmOptions.find((option) => option.key === selectedLlmKey);
+    const modelName = selectedOption?.model || selectedOption?.label || selectedLlmKey;
+    const initialChunkSize = modelName.toLowerCase().includes('pro') ? AI_PRO_CHUNK_SIZE : AI_FAST_CHUNK_SIZE;
     const missingSecret = selectedOption && !selectedOption.secret_available;
-    const confirmMessage = `${label}\n\nModel: ${selectedOption?.label || selectedLlmKey}\nCells: ${cells.length}${missingSecret ? '\n\nWarning: provider secret is not available in Cloud Run.' : ''}\n\nContinue?`;
+    const confirmMessage = `${label}\n\nModel: ${selectedOption?.label || selectedLlmKey}\nCells: ${cells.length}\nBatch size: ${initialChunkSize}${missingSecret ? '\n\nWarning: provider secret is not available in Cloud Run.' : ''}\n\nContinue?`;
     if (!window.confirm(confirmMessage)) {
       return;
     }
     setAiGenerating(true);
     setAiStatus(`Requesting AI suggestions for ${cells.length} cells...`);
-    try {
-      let applied = 0;
-      for (const chunk of chunkCells(cells, 200)) {
+    let applied = 0;
+    let skipped = 0;
+    const skippedSamples: string[] = [];
+
+    async function requestChunk(chunk: AiCell[]) {
+      try {
         const response = await generateUiTextsAiSuggestions({ model_option_key: selectedLlmKey, cells: chunk });
+        const suggestedCells = new Set(response.suggestions.map((suggestion) => cellId(suggestion.language, suggestion.key)));
         for (const suggestion of response.suggestions) {
           setCell(suggestion.language, suggestion.key, suggestion.text);
           applied += 1;
         }
+        const missingSuggestions = chunk.filter((cell) => !suggestedCells.has(cellId(cell.language, cell.key)));
+        if (missingSuggestions.length > 0 && chunk.length > 1) {
+          await requestChunk(missingSuggestions);
+        } else if (missingSuggestions.length > 0) {
+          skipped += missingSuggestions.length;
+          skippedSamples.push(...missingSuggestions.slice(0, 3).map((cell) => `${cell.language}:${cell.key}`));
+        }
+        setAiStatus(`AI progress: ${applied} applied, ${skipped} skipped, ${cells.length - applied - skipped} remaining.`);
+      } catch (nextError) {
+        if (chunk.length > 1) {
+          const midpoint = Math.ceil(chunk.length / 2);
+          setAiStatus(`AI timeout on ${chunk.length} cells. Retrying smaller groups...`);
+          await requestChunk(chunk.slice(0, midpoint));
+          await requestChunk(chunk.slice(midpoint));
+          return;
+        }
+        skipped += 1;
+        const failedCell = chunk[0];
+        const message = nextError instanceof Error ? nextError.message : 'provider error';
+        skippedSamples.push(`${failedCell.language}:${failedCell.key} (${message})`);
+        setAiStatus(`AI progress: ${applied} applied, ${skipped} skipped, ${cells.length - applied - skipped} remaining.`);
       }
-      setAiStatus(`Applied ${applied} editable AI suggestions.`);
-    } catch (nextError) {
-      setAiStatus(nextError instanceof Error ? `AI failed: ${nextError.message}` : 'AI failed.');
+    }
+
+    try {
+      for (const chunk of chunkCells(cells, initialChunkSize)) {
+        await requestChunk(chunk);
+      }
+      if (skipped === 0) {
+        setAiStatus(`Applied ${applied} editable AI suggestions.`);
+      } else if (applied > 0) {
+        const sample = skippedSamples.length > 0 ? ` Sample: ${skippedSamples.slice(0, 3).join(', ')}` : '';
+        setAiStatus(`AI partial result: ${applied} applied, ${skipped} skipped.${sample}`);
+      } else {
+        const sample = skippedSamples.length > 0 ? ` Sample: ${skippedSamples.slice(0, 3).join(', ')}` : '';
+        setAiStatus(`AI could not apply suggestions. ${skipped} cells skipped.${sample}`);
+      }
     } finally {
       setAiGenerating(false);
     }
@@ -399,9 +478,9 @@ export default function UiTextsMatrixPage() {
       <div className="console-page-heading">
         <div>
           <h2>UI Texts Matrix</h2>
-          <p>Spreadsheet workspace for language keys. Phase 1 generates reviewable files and SQL only.</p>
+          <p>Spreadsheet workspace for language keys, Python exports, SQL patches, and controlled direct apply.</p>
         </div>
-        <button className="console-secondary-button" onClick={loadMatrix} type="button">
+        <button className="console-secondary-button" disabled={applying} onClick={loadMatrix} type="button">
           <RefreshCw aria-hidden="true" size={16} />
           Reload from DB
         </button>
@@ -572,6 +651,11 @@ export default function UiTextsMatrixPage() {
           {generating ? <Loader2 aria-hidden="true" className="spin" size={16} /> : <FileCode2 aria-hidden="true" size={16} />}
           Generate final .py files
         </button>
+        <button disabled={applying || generating || changedCellCount === 0 || !matrix} onClick={applyMatrixDirectly} type="button">
+          {applying ? <span aria-hidden="true" className="wave-dots"><i /><i /><i /></span> : <Database aria-hidden="true" size={16} />}
+          Apply DB + Python files
+        </button>
+        {applyStatus ? <span className="ui-texts-apply-status">{applyStatus}</span> : null}
         {generatedPatch ? (
           <>
             <span className="ui-texts-export-summary">

@@ -7,6 +7,7 @@ READ_ONLY_CAPABILITIES = (
     "console.view_runtime_inventory",
     "console.view_ui_texts_matrix",
     "console.use_ui_texts_ai_suggestions",
+    "console.apply_ui_texts_matrix",
     "console.view_trace_summary",
     "console.view_audit",
     "console.view_real_profile",

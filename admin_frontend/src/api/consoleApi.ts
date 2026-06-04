@@ -134,6 +134,20 @@ export type UiTextsPatchResponse = {
   changed_key_count: number;
 };
 
+export type UiTextsApplyResponse = {
+  status: string;
+  write_enabled: boolean;
+  applied_language_count: number;
+  applied_languages: string[];
+  changed_key_count: number;
+  python_files: Array<{
+    language: string;
+    filename: string;
+    path: string;
+    key_count: number;
+  }>;
+};
+
 export type UiTextsLlmOption = {
   key: string;
   label: string;
@@ -234,6 +248,14 @@ export function generateUiTextsPatch(payload: {
   ordered_keys: string[];
 }): Promise<UiTextsPatchResponse> {
   return postJson<UiTextsPatchResponse>('/api/console/ui-texts/patch', payload);
+}
+
+export function applyUiTextsMatrix(payload: {
+  changes: Record<string, Record<string, string>>;
+  matrix: Record<string, Record<string, string>>;
+  ordered_keys: string[];
+}): Promise<UiTextsApplyResponse> {
+  return postJson<UiTextsApplyResponse>('/api/console/ui-texts/apply', payload);
 }
 
 export function fetchUiTextsLlmOptions(): Promise<UiTextsLlmOptionsResponse> {

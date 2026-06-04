@@ -8,6 +8,8 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+import socket
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request
@@ -255,6 +257,93 @@ def _rest_headers() -> dict[str, str] | None:
     }
 
 
+def _write_rest_headers() -> dict[str, str] | None:
+    headers = _rest_headers()
+    if not headers:
+        return None
+    return {
+        **headers,
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+
+def _language_values_for_apply(values: dict[str, str], ordered_keys: list[str]) -> dict[str, str]:
+    applied: dict[str, str] = {}
+    for key in ordered_keys:
+        if key in values:
+            applied[key] = values.get(key, "")
+    for key, value in values.items():
+        if key not in applied:
+            applied[key] = value
+    return applied
+
+
+def _fetch_ui_texts_registry_payload(language: str) -> dict | None:
+    supabase_url = (os.environ.get("PRG2_SUPABASE_URL") or "").rstrip("/")
+    headers = _rest_headers()
+    if not supabase_url or not headers:
+        return None
+    query = urllib.parse.urlencode(
+        {
+            "select": "payload",
+            "domain_key": f"eq.ui_texts_{language}",
+            "scope_kind": "eq.language",
+            "scope_ref": f"eq.{language}",
+            "is_active": "eq.true",
+            "limit": "1",
+        },
+        safe=",().",
+    )
+    registry_request = urllib.request.Request(
+        f"{supabase_url}/rest/v1/config_domain_registry?{query}",
+        headers=headers,
+        method="GET",
+    )
+    with urllib.request.urlopen(registry_request, timeout=10) as response:
+        rows = json.loads(response.read().decode("utf-8"))
+    row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else None
+    payload = row.get("payload") if row else None
+    return payload if isinstance(payload, dict) else None
+
+
+def _apply_ui_texts_registry_payload(language: str, values: dict[str, str]) -> int:
+    supabase_url = (os.environ.get("PRG2_SUPABASE_URL") or "").rstrip("/")
+    headers = _write_rest_headers()
+    if not supabase_url or not headers:
+        raise RuntimeError("Supabase URL or service role key is not configured.")
+
+    existing_payload = _fetch_ui_texts_registry_payload(language)
+    if existing_payload is None:
+        raise RuntimeError(f"Active config_domain_registry row was not found for ui_texts_{language}.")
+    next_payload = {**existing_payload, "texts": values}
+    query = urllib.parse.urlencode(
+        {
+            "domain_key": f"eq.ui_texts_{language}",
+            "scope_kind": "eq.language",
+            "scope_ref": f"eq.{language}",
+            "is_active": "eq.true",
+        },
+        safe=",().",
+    )
+    data = json.dumps(
+        {
+            "payload": next_payload,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    registry_request = urllib.request.Request(
+        f"{supabase_url}/rest/v1/config_domain_registry?{query}",
+        data=data,
+        headers=headers,
+        method="PATCH",
+    )
+    with urllib.request.urlopen(registry_request, timeout=20) as response:
+        rows = json.loads(response.read().decode("utf-8"))
+    return len(rows) if isinstance(rows, list) else 0
+
+
 def _fetch_wf1_llm_payload() -> dict | None:
     supabase_url = (os.environ.get("PRG2_SUPABASE_URL") or "").rstrip("/")
     headers = _rest_headers()
@@ -362,7 +451,7 @@ def _extract_response_text(payload: dict) -> str:
     return ""
 
 
-def _post_json(url: str, headers: dict[str, str], payload: dict, timeout: int = 45) -> dict:
+def _post_json(url: str, headers: dict[str, str], payload: dict, timeout: int = 20) -> dict:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers={**headers, "Content-Type": "application/json"}, method="POST")
     try:
@@ -371,6 +460,8 @@ def _post_json(url: str, headers: dict[str, str], payload: dict, timeout: int = 
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"LLM provider returned {exc.code}: {body[:300]}") from exc
+    except (socket.timeout, TimeoutError, urllib.error.URLError) as exc:
+        raise RuntimeError("LLM provider timeout. Try fewer cells or another model.") from exc
 
 
 def _call_ui_texts_llm(option: dict, prompt: str) -> str:
@@ -562,8 +653,8 @@ def ui_texts_ai_suggestions():
         return jsonify({"status": "error", "message": "model_option_key is required."}), 400
     if not isinstance(cells_payload, list) or not cells_payload:
         return jsonify({"status": "error", "message": "At least one cell is required."}), 400
-    if len(cells_payload) > 200:
-        return jsonify({"status": "error", "message": "At most 200 cells can be translated per request."}), 400
+    if len(cells_payload) > 30:
+        return jsonify({"status": "error", "message": "At most 30 cells can be translated per request."}), 400
 
     option = _llm_option_by_key(option_key)
     if option is None:
@@ -670,4 +761,71 @@ def ui_texts_patch():
         "python_files": python_files,
         "changed_language_count": len(safe_changes),
         "changed_key_count": sum(len(values) for values in safe_changes.values()),
+    })
+
+
+@config_bp.post("/api/console/ui-texts/apply")
+@require_capability("console.apply_ui_texts_matrix")
+def ui_texts_apply():
+    payload = request.get_json(silent=True) or {}
+    changes = payload.get("changes") if isinstance(payload, dict) else {}
+    matrix = payload.get("matrix") if isinstance(payload, dict) else {}
+    ordered_keys = payload.get("ordered_keys") if isinstance(payload, dict) else []
+
+    safe_changes = {
+        str(language): {
+            str(key): str(value)
+            for key, value in language_changes.items()
+            if isinstance(language_changes, dict)
+        }
+        for language, language_changes in (changes or {}).items()
+        if isinstance(language_changes, dict)
+    }
+    safe_matrix = {
+        str(language): {
+            str(key): str(value)
+            for key, value in language_values.items()
+            if isinstance(language_values, dict)
+        }
+        for language, language_values in (matrix or {}).items()
+        if isinstance(language_values, dict)
+    }
+    safe_ordered_keys = [str(key) for key in ordered_keys if isinstance(key, str)]
+    if not safe_ordered_keys:
+        safe_ordered_keys = sorted({key for values in safe_matrix.values() for key in values})
+
+    apply_languages = sorted(language for language in safe_changes if language in safe_matrix)
+    if not apply_languages:
+        return jsonify({"status": "error", "message": "No changed languages were provided."}), 400
+    if not UI_TEXTS_DIR.exists():
+        return jsonify({"status": "error", "message": f"UI texts directory does not exist: {UI_TEXTS_DIR}"}), 500
+
+    applied_languages = []
+    python_files = []
+    try:
+        for language in apply_languages:
+            language_values = _language_values_for_apply(safe_matrix[language], safe_ordered_keys)
+            content = _render_python_file(language, language_values, safe_ordered_keys)
+            target_path = UI_TEXTS_DIR / f"{language}.py"
+            target_path.write_text(content, encoding="utf-8")
+            updated_rows = _apply_ui_texts_registry_payload(language, language_values)
+            if updated_rows < 1:
+                raise RuntimeError(f"No active config_domain_registry row was updated for ui_texts_{language}.")
+            applied_languages.append(language)
+            python_files.append({
+                "language": language,
+                "filename": f"{language}.py",
+                "path": str(target_path),
+                "key_count": len(language_values),
+            })
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc), "applied_languages": applied_languages}), 502
+
+    return jsonify({
+        "status": "ok",
+        "write_enabled": True,
+        "applied_language_count": len(applied_languages),
+        "applied_languages": applied_languages,
+        "changed_key_count": sum(len(values) for values in safe_changes.values()),
+        "python_files": python_files,
     })
