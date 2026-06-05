@@ -2003,3 +2003,174 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================ */
+/* GCS Browser + Routine Tester                                  */
+/* ============================================================ */
+
+.routine-tester-page .routine-tester-section {
+  padding: 1rem;
+}
+
+.routine-tester-section-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--console-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 0.75rem;
+}
+
+.gcs-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.gcs-browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gcs-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.gcs-breadcrumb-item {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  color: var(--console-muted);
+}
+
+.gcs-breadcrumb-item button {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  color: var(--console-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.gcs-breadcrumb-item button:hover {
+  background: var(--console-panel-soft);
+  color: var(--console-text);
+}
+
+.gcs-breadcrumb-item button.active {
+  color: var(--console-text);
+  font-weight: 600;
+  cursor: default;
+}
+
+.gcs-browser-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 480px;
+  overflow-y: auto;
+  border: 1px solid var(--console-border);
+  border-radius: 6px;
+  background: var(--console-bg);
+  padding: 0.35rem;
+}
+
+.gcs-browser-empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--console-muted);
+  font-size: 0.85rem;
+}
+
+.gcs-browser-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.38rem 0.6rem;
+  border-radius: 5px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-size: 0.84rem;
+  color: var(--console-text);
+  transition: background 0.12s;
+}
+
+.gcs-browser-item:hover:not(:disabled) {
+  background: var(--console-panel-soft);
+}
+
+.gcs-browser-item.selected {
+  background: color-mix(in srgb, var(--console-accent) 18%, transparent);
+  font-weight: 500;
+}
+
+.gcs-browser-item.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.gcs-folder {
+  color: var(--console-warn);
+}
+
+.gcs-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gcs-file-meta {
+  flex-shrink: 0;
+  color: var(--console-muted);
+  font-size: 0.76rem;
+}
+
+.gcs-browser-more {
+  display: flex;
+  justify-content: center;
+  padding: 0.25rem 0;
+}
+
+.gcs-media-player,
+.gcs-media-viewer {
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background: var(--console-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.gcs-media-label {
+  font-size: 0.82rem;
+  color: var(--console-muted);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gcs-media-image {
+  max-width: 100%;
+  max-height: 480px;
+  border-radius: 4px;
+  object-fit: contain;
+  background: var(--console-panel-soft);
+}

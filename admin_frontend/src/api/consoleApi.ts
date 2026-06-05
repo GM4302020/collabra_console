@@ -268,3 +268,52 @@ export function generateUiTextsAiSuggestions(payload: {
 }): Promise<UiTextsAiSuggestionsResponse> {
   return postJson<UiTextsAiSuggestionsResponse>('/api/console/ui-texts/ai-suggestions', payload);
 }
+
+export type GcsBrowseFolder = {
+  prefix: string;
+  short_name: string;
+};
+
+export type GcsBrowseFile = {
+  name: string;
+  short_name: string;
+  size: number | null;
+  size_label: string;
+  content_type: string;
+  updated: string | null;
+  is_audio: boolean;
+  is_image: boolean;
+};
+
+export type GcsBrowseResponse = {
+  status: string;
+  bucket: string;
+  prefix: string;
+  folders: GcsBrowseFolder[];
+  files: GcsBrowseFile[];
+  next_page_token: string | null;
+};
+
+export type GcsSignedUrlResponse = {
+  status: string;
+  path: string;
+  bucket: string;
+  signed_url: string;
+};
+
+export function browseGcsBucket(params?: {
+  prefix?: string;
+  page_token?: string;
+  max_results?: number;
+}): Promise<GcsBrowseResponse> {
+  const query = new URLSearchParams();
+  if (params?.prefix !== undefined) query.set('prefix', params.prefix);
+  if (params?.page_token) query.set('page_token', params.page_token);
+  if (params?.max_results) query.set('max_results', String(params.max_results));
+  const qs = query.toString();
+  return getJson<GcsBrowseResponse>(`/api/console/gcs/browse${qs ? `?${qs}` : ''}`);
+}
+
+export function getGcsSignedUrl(path: string): Promise<GcsSignedUrlResponse> {
+  return postJson<GcsSignedUrlResponse>('/api/console/gcs/signed-url', { path });
+}

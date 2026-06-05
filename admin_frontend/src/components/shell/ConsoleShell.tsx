@@ -5,6 +5,7 @@ import {
   Activity,
   ChevronLeft,
   ChevronRight,
+  FlaskConical,
   GitBranch,
   LayoutDashboard,
   Monitor,
@@ -41,6 +42,7 @@ const tabs: Array<{ key: ConsoleTab; label: string; icon: LucideIcon }> = [
   { key: 'runtime', label: 'Runtime Settings', icon: SlidersHorizontal },
   { key: 'uiTexts', label: 'UI Texts Matrix', icon: TableProperties },
   { key: 'traces', label: 'Trace Viewer', icon: GitBranch },
+  { key: 'routineTester', label: 'Routine Tester', icon: FlaskConical },
 ];
 
 const themeOptions: Array<{ key: ThemeChoice; label: string; icon: LucideIcon }> = [

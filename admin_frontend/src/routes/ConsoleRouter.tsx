@@ -5,11 +5,12 @@ import { useState } from 'react';
 import type { ConsoleBootstrap } from '../App';
 import ConsoleShell from '../components/shell/ConsoleShell';
 import DashboardPage from '../pages/DashboardPage';
+import RoutineTesterPage from '../pages/RoutineTesterPage';
 import RuntimeSettingsPage from '../pages/RuntimeSettingsPage';
 import TraceViewerPage from '../pages/TraceViewerPage';
 import UiTextsMatrixPage from '../pages/UiTextsMatrixPage';
 
-export type ConsoleTab = 'dashboard' | 'runtime' | 'traces' | 'uiTexts';
+export type ConsoleTab = 'dashboard' | 'runtime' | 'traces' | 'uiTexts' | 'routineTester';
 
 type ConsoleRouterProps = {
   bootstrap: ConsoleBootstrap;
@@ -27,6 +28,8 @@ export default function ConsoleRouter({ bootstrap, onLogout, onRelogin }: Consol
       <TraceViewerPage />
     ) : activeTab === 'uiTexts' ? (
       <UiTextsMatrixPage />
+    ) : activeTab === 'routineTester' ? (
+      <RoutineTesterPage />
     ) : (
       <DashboardPage bootstrap={bootstrap} />
     );
