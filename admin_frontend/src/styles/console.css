@@ -2174,3 +2174,76 @@ button {
   object-fit: contain;
   background: var(--console-panel-soft);
 }
+
+.gcs-transcript-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+
+.gcs-transcript-result {
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.gcs-transcript-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.gcs-transcript-lang-badge {
+  display: inline-block;
+  background: var(--console-accent);
+  color: var(--console-accent-text);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.gcs-transcript-badge {
+  display: inline-block;
+  background: var(--console-panel-soft);
+  color: var(--console-muted);
+  border: 1px solid var(--console-border);
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.gcs-transcript-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.76rem;
+  color: var(--console-muted);
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--console-border);
+}
+
+.gcs-transcript-text {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: var(--console-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.gcs-transcript-ipa {
+  margin: 0;
+  font-size: 0.84rem;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  color: var(--console-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

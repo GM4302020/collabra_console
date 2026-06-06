@@ -13,6 +13,7 @@ READ_ONLY_CAPABILITIES = (
     "console.view_real_profile",
     "console.view_operational_status",
     "console.view_gcs_browser",
+    "console.use_transcript_api",
 )
 
 

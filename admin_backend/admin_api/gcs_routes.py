@@ -2,15 +2,21 @@
 # ماموریت: API مرور فایل‌های GCS و تولید signed URL برای پخش/نمایش در کنسول.
 
 import datetime
+import json
+import logging
 import os
+import urllib.error as _urlerr
+import urllib.request as _urlreq
 
 from flask import Blueprint, jsonify, request
 
 from admin_api.guards import require_capability
 
 gcs_bp = Blueprint("console_gcs", __name__)
+logger = logging.getLogger(__name__)
 
 BUCKET_NAME = os.environ.get("APP_DATA_BUCKET_NAME", "otmega-collabra-secure")
+MAIN_BACKEND_URL = os.environ.get("MAIN_BACKEND_URL", "https://api.otmega.com")
 
 AUDIO_EXTENSIONS = frozenset({".wav", ".mp3", ".ogg", ".m4a", ".aac", ".flac"})
 IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"})
@@ -137,3 +143,40 @@ def gcs_signed_url():
         "bucket": BUCKET_NAME,
         "signed_url": signed_url,
     })
+
+
+@gcs_bp.post("/api/console/gcs/transcribe")
+@require_capability("console.use_transcript_api")
+def gcs_transcribe():
+    payload = request.get_json(silent=True) or {}
+    blob_name = str(payload.get("blob_name") or "").strip().lstrip("/")
+    mime_type = str(payload.get("mime_type") or "audio/mp3").strip()
+    if not blob_name:
+        return jsonify({"status": "error", "message": "blob_name is required."}), 400
+
+    logger.info("[SVLIP:P1] transcribe request: blob=%s mime=%s", blob_name, mime_type)
+    req_body = json.dumps({
+        "bucket_name": BUCKET_NAME,
+        "blob_name": blob_name,
+        "mime_type": mime_type,
+    }).encode("utf-8")
+    req = _urlreq.Request(
+        f"{MAIN_BACKEND_URL}/api/audio/transcribe-phonetic",
+        data=req_body,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with _urlreq.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        lang = data.get("data", {}).get("detected_language", "?")
+        ipa = data.get("data", {}).get("phonetic_ipa")
+        logger.info("[SVLIP:P1] main backend response: lang=%s ipa_ok=%s", lang, bool(ipa))
+        return jsonify(data), 200
+    except _urlerr.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        logger.error("[SVLIP:P1] main backend HTTP %s: %s", exc.code, body[:400])
+        return jsonify({"status": "error", "message": f"[{exc.code}] {body[:400]}"}), 502
+    except Exception as exc:
+        logger.error("[SVLIP:P1] proxy error: %s", exc)
+        return jsonify({"status": "error", "message": f"Proxy error: {exc}"}), 502

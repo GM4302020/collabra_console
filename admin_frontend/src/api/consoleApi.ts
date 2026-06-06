@@ -317,3 +317,29 @@ export function browseGcsBucket(params?: {
 export function getGcsSignedUrl(path: string): Promise<GcsSignedUrlResponse> {
   return postJson<GcsSignedUrlResponse>('/api/console/gcs/signed-url', { path });
 }
+
+export type TranscriptData = {
+  detected_language: string;
+  espeak_backend_language: string | null;
+  transcript: string;
+  phonetic_ipa: string | null;
+  tone: string | null;
+  speaking_rate: string | null;
+  speaker_gender: string | null;
+  audio_quality: string | null;
+  background_noise: string | null;
+  speaker_count: number | null;
+  confidence: string | null;
+};
+
+export type TranscriptResponse = {
+  status: string;
+  data: TranscriptData;
+};
+
+export function requestTranscript(blobName: string, mimeType: string): Promise<TranscriptResponse> {
+  return postJson<TranscriptResponse>('/api/console/gcs/transcribe', {
+    blob_name: blobName,
+    mime_type: mimeType,
+  });
+}

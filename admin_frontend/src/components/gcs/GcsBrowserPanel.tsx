@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   browseGcsBucket,
   getGcsSignedUrl,
+  requestTranscript,
   type GcsBrowseFile,
   type GcsBrowseFolder,
 } from '../../api/consoleApi';
@@ -22,9 +23,27 @@ import {
 type MediaState =
   | { kind: 'idle' }
   | { kind: 'loading'; path: string }
-  | { kind: 'audio'; path: string; url: string }
+  | { kind: 'audio'; path: string; url: string; mimeType: string }
   | { kind: 'image'; path: string; url: string }
   | { kind: 'error'; path: string; message: string };
+
+type TranscriptState =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | {
+      kind: 'done';
+      detectedLanguage: string;
+      transcript: string;
+      phoneticIpa: string | null;
+      tone: string | null;
+      speakingRate: string | null;
+      speakerGender: string | null;
+      audioQuality: string | null;
+      backgroundNoise: string | null;
+      speakerCount: number | null;
+      confidence: string | null;
+    }
+  | { kind: 'error'; message: string };
 
 function buildBreadcrumbs(prefix: string): Array<{ label: string; prefix: string }> {
   const crumbs: Array<{ label: string; prefix: string }> = [{ label: 'root', prefix: '' }];
@@ -47,6 +66,7 @@ export default function GcsBrowserPanel() {
   const [loading, setLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [media, setMedia] = useState<MediaState>({ kind: 'idle' });
+  const [transcriptState, setTranscriptState] = useState<TranscriptState>({ kind: 'idle' });
   const audioRef = useRef<HTMLAudioElement>(null);
 
   const loadPrefix = useCallback(async (nextPrefix: string, pageToken?: string) => {
@@ -85,7 +105,8 @@ export default function GcsBrowserPanel() {
     try {
       const response = await getGcsSignedUrl(file.name);
       if (file.is_audio) {
-        setMedia({ kind: 'audio', path: file.name, url: response.signed_url });
+        setMedia({ kind: 'audio', path: file.name, url: response.signed_url, mimeType: file.content_type || 'audio/mp3' });
+        setTranscriptState({ kind: 'idle' });
       } else {
         setMedia({ kind: 'image', path: file.name, url: response.signed_url });
       }
@@ -101,6 +122,7 @@ export default function GcsBrowserPanel() {
   function handleFolderClick(folder: GcsBrowseFolder) {
     if (media.kind === 'audio' || media.kind === 'image') {
       setMedia({ kind: 'idle' });
+      setTranscriptState({ kind: 'idle' });
     }
     void loadPrefix(folder.prefix);
   }
@@ -109,8 +131,35 @@ export default function GcsBrowserPanel() {
     if (crumbPrefix === prefix) return;
     if (media.kind === 'audio' || media.kind === 'image') {
       setMedia({ kind: 'idle' });
+      setTranscriptState({ kind: 'idle' });
     }
     void loadPrefix(crumbPrefix);
+  }
+
+  async function handleTranscript() {
+    if (media.kind !== 'audio') return;
+    setTranscriptState({ kind: 'loading' });
+    try {
+      const result = await requestTranscript(media.path, media.mimeType);
+      setTranscriptState({
+        kind: 'done',
+        detectedLanguage: result.data.detected_language,
+        transcript: result.data.transcript,
+        phoneticIpa: result.data.phonetic_ipa,
+        tone: result.data.tone ?? null,
+        speakingRate: result.data.speaking_rate ?? null,
+        speakerGender: result.data.speaker_gender ?? null,
+        audioQuality: result.data.audio_quality ?? null,
+        backgroundNoise: result.data.background_noise ?? null,
+        speakerCount: result.data.speaker_count ?? null,
+        confidence: result.data.confidence ?? null,
+      });
+    } catch (error) {
+      setTranscriptState({
+        kind: 'error',
+        message: error instanceof Error ? error.message : 'Transcript request failed.',
+      });
+    }
   }
 
   const breadcrumbs = buildBreadcrumbs(prefix);
@@ -222,6 +271,40 @@ export default function GcsBrowserPanel() {
             src={media.url}
             style={{ width: '100%' }}
           />
+          <div className="gcs-transcript-actions">
+            <button
+              className="console-secondary-button"
+              disabled={transcriptState.kind === 'loading'}
+              onClick={() => void handleTranscript()}
+              type="button"
+            >
+              {transcriptState.kind === 'loading' ? <Loader2 aria-hidden="true" className="spin" size={15} /> : null}
+              Get Transcript
+            </button>
+          </div>
+          {transcriptState.kind === 'done' ? (
+            <div className="gcs-transcript-result">
+              <div className="gcs-transcript-badges">
+                <span className="gcs-transcript-lang-badge">{transcriptState.detectedLanguage}</span>
+                {transcriptState.confidence ? <span className="gcs-transcript-badge">{transcriptState.confidence}</span> : null}
+                {transcriptState.tone ? <span className="gcs-transcript-badge">{transcriptState.tone}</span> : null}
+                {transcriptState.speakingRate ? <span className="gcs-transcript-badge">{transcriptState.speakingRate}</span> : null}
+                {transcriptState.speakerGender ? <span className="gcs-transcript-badge">{transcriptState.speakerGender}</span> : null}
+              </div>
+              <p className="gcs-transcript-text">{transcriptState.transcript}</p>
+              {transcriptState.phoneticIpa ? (
+                <p className="gcs-transcript-ipa">{transcriptState.phoneticIpa}</p>
+              ) : null}
+              <div className="gcs-transcript-meta">
+                {transcriptState.audioQuality ? <span>quality: {transcriptState.audioQuality}</span> : null}
+                {transcriptState.backgroundNoise ? <span>noise: {transcriptState.backgroundNoise}</span> : null}
+                {transcriptState.speakerCount != null ? <span>speakers: {transcriptState.speakerCount}</span> : null}
+              </div>
+            </div>
+          ) : null}
+          {transcriptState.kind === 'error' ? (
+            <div className="console-alert error">{transcriptState.message}</div>
+          ) : null}
         </div>
       ) : null}
 
