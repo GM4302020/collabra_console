@@ -16,7 +16,13 @@ logger = logging.getLogger(__name__)
 
 BUCKET_NAME = os.environ.get("APP_DATA_BUCKET_NAME", "otmega-collabra-secure")
 PREFS_BLOB = "advisors/collabra-20018-v1.0.0/main-data/svlip_model_language_prefs.json"
+LIVE_ASR_CONFIG_BLOB = "advisors/collabra-20018-v1.0.0/main-data/live_asr_config.json"
 MAIN_BACKEND_URL = os.environ.get("MAIN_BACKEND_URL", "https://api.otmega.com")
+
+_LIVE_ASR_CONFIG_DEFAULT: dict = {
+    "active_model": "whisper-large-v3",
+    "available_models": ["whisper-large-v3", "whisper-large-v3-turbo"],
+}
 
 _storage_client: storage.Client | None = None
 
@@ -82,7 +88,7 @@ def live_chunk():
         return jsonify({"status": "error", "message": "audio field required"}), 400
 
     audio_file = request.files['audio']
-    whisper_model = (request.form.get('whisper_model') or 'whisper-large-v3-turbo').strip()
+    whisper_model = (request.form.get('whisper_model') or 'whisper-large-v3').strip()
 
     try:
         resp = _rq.post(
@@ -103,4 +109,46 @@ def live_chunk():
         return jsonify(data), resp.status_code
     except Exception as e:
         logger.error("live_chunk proxy error: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@svlip_prefs_bp.get("/api/console/svlip/live-asr-config")
+@require_capability("console.use_transcript_api")
+def get_live_asr_config():
+    """بازیابی تنظیمات LASR-PTT از GCS — با fallback به مقادیر پیش‌فرض."""
+    try:
+        blob = _get_storage().bucket(BUCKET_NAME).blob(LIVE_ASR_CONFIG_BLOB)
+        if blob.exists():
+            config = json.loads(blob.download_as_text(encoding="utf-8"))
+            if config.get("active_model") not in ('whisper-large-v3', 'whisper-large-v3-turbo'):
+                config["active_model"] = "whisper-large-v3"
+        else:
+            config = _LIVE_ASR_CONFIG_DEFAULT.copy()
+        return jsonify({"status": "ok", "config": config})
+    except Exception as e:
+        logger.error("live_asr_config: read failed: %s", e)
+        return jsonify({"status": "ok", "config": _LIVE_ASR_CONFIG_DEFAULT.copy()})
+
+
+@svlip_prefs_bp.post("/api/console/svlip/live-asr-config")
+@require_capability("console.use_transcript_api")
+def set_live_asr_config():
+    """ذخیره تنظیمات LASR-PTT در GCS."""
+    payload = request.get_json(silent=True) or {}
+    active_model = str(payload.get("active_model") or "").strip()
+    if active_model not in ('whisper-large-v3', 'whisper-large-v3-turbo'):
+        return jsonify({"status": "error", "message": "active_model must be whisper-large-v3 or whisper-large-v3-turbo"}), 400
+    try:
+        config = {
+            "active_model": active_model,
+            "available_models": ["whisper-large-v3", "whisper-large-v3-turbo"],
+        }
+        blob = _get_storage().bucket(BUCKET_NAME).blob(LIVE_ASR_CONFIG_BLOB)
+        blob.upload_from_string(
+            json.dumps(config, ensure_ascii=False, indent=2),
+            content_type="application/json",
+        )
+        return jsonify({"status": "ok", "config": config})
+    except Exception as e:
+        logger.error("live_asr_config: write failed: %s", e)
         return jsonify({"status": "error", "message": str(e)}), 500

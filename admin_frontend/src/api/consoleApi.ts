@@ -407,6 +407,10 @@ export type LiveChunkResponse = {
   transcript: string;
   language_code: string;
   latency_ms: number;
+  duration_ms: number;
+  estimated_cost_usd: number;
+  estimated_cost_otcoin: number;
+  model_key: string;
 };
 
 export async function sendLiveChunk(audio: Blob, whisperModel: string): Promise<LiveChunkResponse> {

@@ -201,6 +201,8 @@ UI_TEXTS = {
     "CHAT_ATTACHMENT_COUNT_ONE": "1 attachment",
     "CHAT_ATTACHMENT_COUNT_MANY": "{count} attachments",
     "CHAT_VOICE_NOTE": "Voice Note",
+    "CHAT_LASR_PTT_LIVE_TOOLTIP":   "Hold to transcribe",
+    "CHAT_LASR_PTT_RECORD_TOOLTIP": "Hold to record voice note",
     "CHAT_UNAVAILABLE_TARGET_BLOCKED_VIEWER": "Chat unavailable. This user blocked you.",
     "CHAT_UNAVAILABLE_VIEWER_BLOCKED_TARGET": "Chat unavailable. You blocked this user.",
     "CHAT_UNAVAILABLE_ACCOUNT_POLICY": "Account access is blocked by policy.",

@@ -49,11 +49,12 @@ const TOOLTIP_TEXT: Record<IconMode, string> = {
 
 // ─── Segment types (Live mode) ────────────────────────────────────────────────
 
-type ChunkMeta = { latencyMs: number };
+type ChunkMeta = { latencyMs: number; durationMs: number; costOtcoin: number; costUsd: number; model: string };
 type Segment   = { id: number; lang: string; text: string; chunks: ChunkMeta[]; startedAt: Date };
 
 function fmtTime(d: Date)               { return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
 function avgMs(chunks: ChunkMeta[])     { return chunks.length ? Math.round(chunks.reduce((s, c) => s + c.latencyMs, 0) / chunks.length) : 0; }
+function totalCost(chunks: ChunkMeta[]) { return chunks.reduce((s, c) => s + c.costOtcoin, 0); }
 function fmtDuration(sec: number)       { return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -61,7 +62,7 @@ function fmtDuration(sec: number)       { return `${Math.floor(sec / 60)}:${Stri
 export default function LiveAsrPanel() {
   // ── general
   const [status,       setStatus]       = useState<Status>('idle');
-  const [whisperModel, setWhisperModel] = useState<string>('whisper-large-v3-turbo');
+  const [whisperModel, setWhisperModel] = useState<string>('whisper-large-v3');
   const [elapsed,      setElapsed]      = useState(0);
   const [error,        setError]        = useState<string | null>(null);
 
@@ -70,8 +71,9 @@ export default function LiveAsrPanel() {
   const [tooltipIconId, setTooltipIconId] = useState<string | null>(null);
 
   // ── live streaming state
-  const [segments,    setSegments]    = useState<Segment[]>([]);
-  const [totalChunks, setTotalChunks] = useState(0);
+  const [segments,              setSegments]              = useState<Segment[]>([]);
+  const [totalChunks,           setTotalChunks]           = useState(0);
+  const [sessionTotalCostOtcoin, setSessionTotalCostOtcoin] = useState(0);
 
   // ── record mode state
   const [recordedBlob,     setRecordedBlob]     = useState<Blob | null>(null);
@@ -113,18 +115,20 @@ export default function LiveAsrPanel() {
 
   function syncSegments(updated: Segment[]) { segmentsRef.current = updated; setSegments([...updated]); }
 
-  function appendChunk(transcript: string, lang: string, latencyMs: number) {
+  function appendChunk(transcript: string, lang: string, latencyMs: number, durationMs: number, costOtcoin: number, costUsd: number, model: string) {
+    const chunk: ChunkMeta = { latencyMs, durationMs, costOtcoin, costUsd, model };
     const segs = segmentsRef.current;
     const last  = segs[segs.length - 1];
     if (last && last.lang === lang) {
       const updated = [...segs];
-      updated[updated.length - 1] = { ...last, text: last.text ? `${last.text} ${transcript}` : transcript, chunks: [...last.chunks, { latencyMs }] };
+      updated[updated.length - 1] = { ...last, text: last.text ? `${last.text} ${transcript}` : transcript, chunks: [...last.chunks, chunk] };
       syncSegments(updated);
     } else {
       segIdRef.current += 1;
-      syncSegments([...segs, { id: segIdRef.current, lang, text: transcript, chunks: [{ latencyMs }], startedAt: new Date() }]);
+      syncSegments([...segs, { id: segIdRef.current, lang, text: transcript, chunks: [chunk], startedAt: new Date() }]);
     }
     setTotalChunks(n => n + 1);
+    setSessionTotalCostOtcoin(prev => Math.round((prev + costOtcoin) * 10000) / 10000);
   }
 
   function startTimer() {
@@ -171,7 +175,15 @@ export default function LiveAsrPanel() {
       if (!stillActive) setStatus('live-processing');
       try {
         const result = await sendLiveChunk(blob, model);
-        if (result.transcript?.trim()) appendChunk(result.transcript.trim(), result.language_code || 'unknown', result.latency_ms);
+        if (result.transcript?.trim()) appendChunk(
+          result.transcript.trim(),
+          result.language_code || 'unknown',
+          result.latency_ms,
+          result.duration_ms ?? 0,
+          result.estimated_cost_otcoin ?? 0,
+          result.estimated_cost_usd ?? 0,
+          result.model_key ?? model,
+        );
       } catch { /* silent */ }
       if (isActiveRef.current) { setStatus('live-streaming'); startChunk(stream, model); } else setStatus('idle');
     };
@@ -354,6 +366,7 @@ export default function LiveAsrPanel() {
             )}
             {isProcessing && <><span className="live-asr-dot processing" /><span>Processing…</span></>}
             {totalChunks > 0 && !isRecordingActive && <span>{totalChunks} chunks</span>}
+            {sessionTotalCostOtcoin > 0 && <span className="live-asr-session-cost">{sessionTotalCostOtcoin.toFixed(4)} OTC</span>}
           </div>
         )}
       </div>
@@ -422,9 +435,20 @@ export default function LiveAsrPanel() {
                     <span className="live-asr-meta-item">{fmtTime(seg.startedAt)}</span>
                     <span className="live-asr-meta-item">avg {avgMs(seg.chunks)} ms</span>
                     <span className="live-asr-meta-item">{seg.chunks.length} chunk{seg.chunks.length !== 1 ? 's' : ''}</span>
-                    {seg.chunks.length > 1 && (
+                    {totalCost(seg.chunks) > 0 && (
+                      <span className="live-asr-meta-item live-asr-seg-cost">{totalCost(seg.chunks).toFixed(4)} OTC</span>
+                    )}
+                    {seg.chunks.length > 0 && (
                       <span className="live-asr-meta-item">
-                        {seg.chunks.map((c, i) => <span key={i} className="live-asr-chunk-badge">{c.latencyMs}ms</span>)}
+                        {seg.chunks.map((c, i) => (
+                          <span
+                            key={i}
+                            className="live-asr-chunk-badge"
+                            title={`model: ${c.model} · audio: ${c.durationMs}ms · cost: ${c.costUsd.toFixed(6)} USD`}
+                          >
+                            {c.latencyMs}ms{c.durationMs > 0 ? ` / ${c.durationMs}ms` : ''}{c.costOtcoin > 0 ? ` · ${c.costOtcoin.toFixed(3)}🪙` : ''}
+                          </span>
+                        ))}
                       </span>
                     )}
                   </div>
@@ -440,7 +464,7 @@ export default function LiveAsrPanel() {
           )}
           {segments.length > 0 && (
             <div className="live-asr-actions">
-              <button className="console-secondary-button" onClick={() => { syncSegments([]); setTotalChunks(0); }} type="button">Clear</button>
+              <button className="console-secondary-button" onClick={() => { syncSegments([]); setTotalChunks(0); setSessionTotalCostOtcoin(0); }} type="button">Clear</button>
             </div>
           )}
         </div>
