@@ -145,20 +145,59 @@ def gcs_signed_url():
     })
 
 
+@gcs_bp.post("/api/console/gcs/upload-audio")
+@require_capability("console.use_transcript_api")
+def upload_audio():
+    """آپلود مستقیم بلاب صوتی به GCS زیر مسیر uploads کاربر."""
+    import re
+    if 'audio' not in request.files:
+        return jsonify({"status": "error", "message": "audio field required"}), 400
+
+    audio_file = request.files['audio']
+    filename = (request.form.get('filename') or '').strip()
+    uploads_prefix = (request.form.get('prefix') or 'users/9197bacb-2387-4639-814f-9d643bbfb245/uploads').strip().strip('/')
+
+    if not filename or not re.match(r'^[\w\-\.]+$', filename):
+        import datetime as _dt
+        ts = _dt.datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        mime_ext = {
+            'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/wav': 'wav',
+            'audio/mp3': 'mp3', 'audio/mpeg': 'mp3', 'audio/m4a': 'm4a',
+        }
+        ext = mime_ext.get(audio_file.content_type or '', 'webm')
+        filename = f"rec_{ts}.{ext}"
+
+    blob_path = f"{uploads_prefix}/{filename}"
+
+    try:
+        from google.cloud import storage as _gcs
+        client = _gcs.Client()
+        bucket = client.bucket(BUCKET_NAME)
+        blob = bucket.blob(blob_path)
+        blob.upload_from_file(audio_file.stream, content_type=audio_file.content_type or 'audio/webm')
+        logger.info("[GCS-UPLOAD] saved: %s", blob_path)
+        return jsonify({"status": "ok", "path": blob_path, "filename": filename, "bucket": BUCKET_NAME}), 200
+    except Exception as exc:
+        logger.error("upload_audio error: %s", exc)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
 @gcs_bp.post("/api/console/gcs/transcribe")
 @require_capability("console.use_transcript_api")
 def gcs_transcribe():
     payload = request.get_json(silent=True) or {}
     blob_name = str(payload.get("blob_name") or "").strip().lstrip("/")
     mime_type = str(payload.get("mime_type") or "audio/mp3").strip()
+    model_key = str(payload.get("model_key") or "gemini-2.5-flash").strip()
     if not blob_name:
         return jsonify({"status": "error", "message": "blob_name is required."}), 400
 
-    logger.info("[SVLIP:P1] transcribe request: blob=%s mime=%s", blob_name, mime_type)
+    logger.info("[SVLIP] transcribe request: blob=%s mime=%s model=%s", blob_name, mime_type, model_key)
     req_body = json.dumps({
         "bucket_name": BUCKET_NAME,
         "blob_name": blob_name,
         "mime_type": mime_type,
+        "model_key": model_key,
     }).encode("utf-8")
     req = _urlreq.Request(
         f"{MAIN_BACKEND_URL}/api/audio/transcribe-phonetic",
@@ -171,7 +210,7 @@ def gcs_transcribe():
             data = json.loads(resp.read().decode("utf-8"))
         lang = data.get("data", {}).get("detected_language", "?")
         ipa = data.get("data", {}).get("phonetic_ipa")
-        logger.info("[SVLIP:P1] main backend response: lang=%s ipa_ok=%s", lang, bool(ipa))
+        logger.info("[SVLIP] backend response: model=%s lang=%s ipa_ok=%s", model_key, lang, bool(ipa))
         return jsonify(data), 200
     except _urlerr.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")

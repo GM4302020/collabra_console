@@ -319,8 +319,11 @@ export function getGcsSignedUrl(path: string): Promise<GcsSignedUrlResponse> {
 }
 
 export type TranscriptData = {
+  model_key: string;
+  model_display_name: string;
   detected_language: string;
   espeak_backend_language: string | null;
+  ipa_supported: boolean;
   transcript: string;
   phonetic_ipa: string | null;
   tone: string | null;
@@ -330,6 +333,9 @@ export type TranscriptData = {
   background_noise: string | null;
   speaker_count: number | null;
   confidence: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  estimated_cost_usd: number | null;
 };
 
 export type TranscriptResponse = {
@@ -337,9 +343,82 @@ export type TranscriptResponse = {
   data: TranscriptData;
 };
 
-export function requestTranscript(blobName: string, mimeType: string): Promise<TranscriptResponse> {
+export function requestTranscript(blobName: string, mimeType: string, modelKey: string): Promise<TranscriptResponse> {
   return postJson<TranscriptResponse>('/api/console/gcs/transcribe', {
     blob_name: blobName,
     mime_type: mimeType,
+    model_key: modelKey,
   });
+}
+
+// ─── SVLIP Model Language Preferences (GCS-backed, cross-device) ─────────────
+
+export type ModelPrefs = Record<string, string>;
+
+export type ModelPrefsResponse = {
+  status: string;
+  prefs: ModelPrefs;
+};
+
+export function getModelPrefs(): Promise<ModelPrefsResponse> {
+  return getJson<ModelPrefsResponse>('/api/console/svlip/model-prefs');
+}
+
+export function setModelPref(language: string, modelKey: string | null): Promise<ModelPrefsResponse> {
+  return postJson<ModelPrefsResponse>('/api/console/svlip/model-prefs', {
+    language,
+    model_key: modelKey ?? '',
+    clear: modelKey === null,
+  });
+}
+
+// ─── GCS Audio Upload ────────────────────────────────────────────────────────
+
+export type UploadAudioResponse = {
+  status: string;
+  path: string;
+  filename: string;
+  bucket: string;
+};
+
+export async function uploadAudioToGcs(
+  audio: Blob,
+  filename?: string,
+  prefix?: string,
+): Promise<UploadAudioResponse> {
+  const fd = new FormData();
+  fd.append('audio', audio, filename ?? 'recording.webm');
+  if (filename) fd.append('filename', filename);
+  if (prefix) fd.append('prefix', prefix);
+  const response = await fetch('/api/console/gcs/upload-audio', {
+    method: 'POST',
+    credentials: 'include',
+    body: fd,
+  });
+  const data = await response.json() as UploadAudioResponse;
+  if (!response.ok) throw new Error((data as { message?: string }).message ?? `upload failed ${response.status}`);
+  return data;
+}
+
+// ─── Live ASR Streaming ───────────────────────────────────────────────────────
+
+export type LiveChunkResponse = {
+  status: string;
+  transcript: string;
+  language_code: string;
+  latency_ms: number;
+};
+
+export async function sendLiveChunk(audio: Blob, whisperModel: string): Promise<LiveChunkResponse> {
+  const fd = new FormData();
+  fd.append('audio', audio, 'chunk.webm');
+  fd.append('whisper_model', whisperModel);
+  const response = await fetch('/api/console/svlip/live-chunk', {
+    method: 'POST',
+    credentials: 'include',
+    body: fd,
+  });
+  const data = await response.json() as LiveChunkResponse;
+  if (!response.ok) throw new Error((data as { message?: string }).message ?? `live-chunk failed ${response.status}`);
+  return data;
 }

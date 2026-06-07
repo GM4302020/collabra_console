@@ -1,22 +1,53 @@
 // FILE: ~/otmega/otmega_app/console/admin_frontend/src/pages/RoutineTesterPage.tsx
-// ماموریت: صفحه تست مستقل روتین‌های برنامه با GCS File Browser به‌عنوان اولین ابزار.
+// ماموریت: صفحه تست مستقل روتین‌های برنامه — تب GCS File Browser و Live ASR Streaming.
 
+import { useState } from 'react';
 import GcsBrowserPanel from '../components/gcs/GcsBrowserPanel';
+import LiveAsrPanel from '../components/live-asr/LiveAsrPanel';
+
+const TABS = [
+  { id: 'gcs', label: 'GCS File Browser' },
+  { id: 'live-asr', label: 'Live ASR Streaming' },
+] as const;
+
+type TabId = (typeof TABS)[number]['id'];
 
 export default function RoutineTesterPage() {
+  const [activeTab, setActiveTab] = useState<TabId>('gcs');
+
   return (
     <div className="console-page routine-tester-page">
       <div className="console-page-heading">
         <div>
           <h2>Routine Tester</h2>
-          <p>Standalone test workspace for application routines. Browse GCS files for audio playback and image preview.</p>
+          <p>Standalone test workspace for application routines.</p>
         </div>
       </div>
 
-      <section className="console-panel routine-tester-section">
-        <h3 className="routine-tester-section-title">GCS File Browser</h3>
-        <GcsBrowserPanel />
-      </section>
+      <div className="routine-tester-tabs">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            className={`routine-tester-tab${activeTab === tab.id ? ' active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+            type="button"
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'gcs' && (
+        <section className="console-panel routine-tester-section">
+          <GcsBrowserPanel />
+        </section>
+      )}
+
+      {activeTab === 'live-asr' && (
+        <section className="console-panel routine-tester-section">
+          <LiveAsrPanel />
+        </section>
+      )}
     </div>
   );
 }

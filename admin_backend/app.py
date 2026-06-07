@@ -12,6 +12,7 @@ from admin_api.health_routes import health_bp
 from admin_api.operational_routes import operational_bp
 from admin_api.session_routes import session_bp
 from admin_api.static_routes import register_static_routes
+from admin_api.svlip_prefs_routes import svlip_prefs_bp
 from admin_api.trace_routes import trace_bp
 
 
@@ -31,6 +32,7 @@ def create_app() -> Flask:
     app.register_blueprint(operational_bp)
     app.register_blueprint(trace_bp)
     app.register_blueprint(audit_bp)
+    app.register_blueprint(svlip_prefs_bp)
     register_static_routes(app)
     return app
 
