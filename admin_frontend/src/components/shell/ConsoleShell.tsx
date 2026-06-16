@@ -179,6 +179,7 @@ export default function ConsoleShell({ activeTab, children, onLogout, onRelogin,
             </div>
           ) : null}
         </div>
+        <hr aria-hidden="true" className="console-sidebar-divider" />
         <nav className="console-nav" aria-label="Console views">
           {tabs.map((tab) => {
             const TabIcon = tab.icon;

@@ -119,7 +119,7 @@ button {
   display: flex;
   gap: 12px;
   flex: 0 0 auto;
-  margin-bottom: 22px;
+  padding-bottom: 14px;
   min-width: 0;
   position: relative;
 }
@@ -264,14 +264,23 @@ button {
   display: block;
 }
 
+.console-sidebar-divider {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  flex-shrink: 0;
+  margin: 0 -22px;
+}
+
 .console-nav {
   align-content: start;
   display: grid;
   gap: 8px;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;
-  padding-right: 2px;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 2px 14px 0;
 }
 
 .console-nav button,
@@ -309,7 +318,6 @@ button {
   display: grid;
   flex: 0 0 auto;
   gap: 8px;
-  margin-top: auto;
   padding-top: 14px;
 }
 
@@ -438,7 +446,9 @@ button {
 
 .console-content {
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  -webkit-overflow-scrolling: touch;
   padding: 24px 28px;
 }
 
@@ -1931,14 +1941,16 @@ button {
 
 @media (max-width: 860px) {
   .console-shell {
-    height: 100%;
+    height: 100dvh;
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
   }
 
   .console-sidebar {
     height: auto;
-    max-height: 42vh;
+    max-height: 40dvh;
+    overflow-y: scroll;
+    -webkit-overflow-scrolling: touch;
   }
 
   .console-sidebar-resizer {
@@ -1976,12 +1988,15 @@ button {
   }
 
   .console-main {
-    grid-template-rows: 72px minmax(0, 1fr) 34px;
-    height: 100%;
+    grid-template-rows: 56px minmax(0, 1fr) 30px;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .console-content {
     padding: 18px;
+    overflow-y: scroll;
+    -webkit-overflow-scrolling: touch;
   }
 
   .console-footer {
@@ -2613,43 +2628,76 @@ button {
   50% { opacity: 0.4; transform: scale(0.75); }
 }
 
-.live-asr-icon-suggestions {
+/* ── 4-button grid ── */
+.lasr-buttons-grid {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 1rem;
   padding: 0.85rem 1rem;
   background: var(--console-panel-soft);
   border: 1px solid var(--console-border);
   border-radius: 8px;
 }
 
-.live-asr-icon-suggestions-label {
-  font-size: 0.72rem;
+.lasr-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--console-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.lasr-buttons-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.4rem;
+}
+
+.lasr-button-unit {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: 170px;
+}
+
+.lasr-unit-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.lasr-unit-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--console-text);
+}
+
+.lasr-unit-hint {
+  font-size: 0.7rem;
   color: var(--console-muted);
 }
 
-.live-asr-icon-suggestions-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.1rem;
+.lasr-stop-btn {
+  margin-top: 0.25rem;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.7rem;
+  background: var(--console-panel);
+  border: 1px solid var(--console-border);
+  border-radius: 4px;
+  color: var(--console-text);
+  cursor: pointer;
+  width: fit-content;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
 }
 
-.live-asr-icon-option {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.4rem;
+.lasr-stop-btn:hover {
+  background: var(--console-red);
+  color: #fff;
+  border-color: var(--console-red);
 }
 
-.live-asr-icon-tooltip-wrap {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-/* ── Round icon button ── */
-.live-asr-icon-btn {
+/* ── Base round mic button ── */
+.lasr-mic-btn {
   width: 52px;
   height: 52px;
   padding: 0;
@@ -2661,84 +2709,93 @@ button {
   background: var(--console-panel);
   color: var(--console-muted);
   cursor: pointer;
-  transition: background 0.1s, border-color 0.1s, color 0.1s, transform 0.08s, box-shadow 0.1s;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.lasr-mic-btn:not(:disabled):hover {
+  border-color: var(--console-accent);
+  color: var(--console-accent);
+}
+
+.lasr-mic-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Collabra recording — green pulse (matches fi-rec-active) */
+.lasr-mic-btn.lasr-collabra-recording {
+  color: #22c55e;
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.08);
+  animation: lasr-collabra-pulse 1.4s ease-in-out infinite;
+}
+
+/* Collabra paused — orange ring (matches fi-rec-paused) */
+.lasr-mic-btn.lasr-collabra-paused {
+  color: #f97316;
+  border-color: #f97316;
+  background: none;
+}
+
+/* Guest recording — red bg (matches guest-public-mic-button.recording) */
+.lasr-mic-btn.lasr-guest-recording {
+  color: #e53935;
+  border-color: #e53935;
+  background: rgba(229, 57, 53, 0.1);
+}
+
+/* Guest paused — yellow bg (matches guest-public-mic-button.paused) */
+.lasr-mic-btn.lasr-guest-paused {
+  color: #f59e0b;
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+@keyframes lasr-collabra-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(0.88); }
+}
+
+/* ── Live stream PTT button ── */
+.lasr-live-btn {
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--console-red);
+  background: var(--console-panel);
+  color: var(--console-red);
+  cursor: pointer;
+  flex-shrink: 0;
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
+  transition: background 0.1s, color 0.1s, transform 0.08s, box-shadow 0.1s;
 }
 
-/* Live mode idle — always red */
-.live-asr-icon-btn.mode-live {
-  border-color: var(--console-red);
-  color: var(--console-red);
+.lasr-live-btn:not(:disabled):hover {
+  background: rgba(214, 76, 54, 0.08);
 }
-.live-asr-icon-btn.mode-live.active {
+
+.lasr-live-btn.active {
   background: var(--console-red);
-  border-color: var(--console-red);
   color: #fff;
   transform: scale(0.94);
   box-shadow: 0 0 0 4px rgba(214, 76, 54, 0.18);
 }
 
-/* Record mode idle */
-.live-asr-icon-btn.mode-record {
-  border-color: var(--console-blue);
-  color: var(--console-blue);
-}
-.live-asr-icon-btn.mode-record:not(:disabled):hover {
-  background: rgba(59, 130, 246, 0.08);
-}
-.live-asr-icon-btn.mode-record.active {
-  background: var(--console-blue);
-  border-color: var(--console-blue);
-  color: #fff;
-  transform: scale(0.94);
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.18);
-}
-
-.live-asr-icon-btn:disabled {
+.lasr-live-btn:disabled {
   opacity: 0.35;
   cursor: default;
 }
 
-/* ── Tooltip (above icon) ── */
-.live-asr-tooltip {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  white-space: nowrap;
-  background: var(--console-text);
-  color: var(--console-panel);
-  font-size: 0.72rem;
-  padding: 0.3rem 0.65rem;
-  border-radius: 6px;
-  pointer-events: none;
-  z-index: 20;
-  animation: live-asr-tooltip-in 0.15s ease;
-}
-.live-asr-tooltip::after {
-  content: '';
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  border: 5px solid transparent;
-  border-top-color: var(--console-text);
-}
-
-@keyframes live-asr-tooltip-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
-
-.live-asr-icon-option-label {
-  font-size: 0.65rem;
-  color: var(--console-muted);
-  text-align: center;
-  max-width: 76px;
-  word-break: break-word;
-  line-height: 1.3;
+/* Paused indicator dot */
+.live-asr-dot.lasr-dot-paused {
+  background: #f97316;
 }
 
 .live-asr-session-stats {
@@ -2820,6 +2877,95 @@ button {
   border-radius: 3px;
 }
 
+/* ── Live ASR result cards (each chunk is its own card) ── */
+
+.live-asr-segment-card {
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.live-asr-segment-card--error {
+  border-color: #e05252;
+  background: rgba(224, 82, 82, 0.06);
+}
+
+.live-asr-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.live-asr-card-index {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--console-muted);
+  min-width: 1.8rem;
+}
+
+.live-asr-model-tag {
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: var(--console-accent, #2563eb);
+  color: #fff;
+  border-radius: 4px;
+  padding: 0.1rem 0.45rem;
+  letter-spacing: 0.02em;
+}
+
+.live-asr-card-time {
+  font-size: 0.7rem;
+  color: var(--console-muted);
+  margin-left: auto;
+}
+
+.live-asr-card-specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.live-asr-spec-item {
+  font-size: 0.75rem;
+  color: var(--console-text);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.live-asr-spec-label {
+  font-size: 0.68rem;
+  color: var(--console-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.live-asr-card-text {
+  font-size: 0.92rem;
+  color: var(--console-text);
+  line-height: 1.5;
+  margin: 0;
+  padding-top: 0.15rem;
+  border-top: 1px solid var(--console-border);
+}
+
+.live-asr-card-error-text {
+  font-size: 0.82rem;
+  color: #e05252;
+  font-family: monospace;
+  margin: 0;
+  word-break: break-all;
+  padding-top: 0.15rem;
+  border-top: 1px solid rgba(224, 82, 82, 0.3);
+}
+
+/* ── end result cards ── */
+
 .live-asr-processing-indicator {
   display: flex;
   align-items: center;
@@ -2834,6 +2980,7 @@ button {
   display: flex;
   gap: 0.5rem;
 }
+
 
 /* ── Record result ── */
 .live-asr-record-result {

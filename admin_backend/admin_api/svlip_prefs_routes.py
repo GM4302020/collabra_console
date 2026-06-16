@@ -19,9 +19,15 @@ PREFS_BLOB = "advisors/collabra-20018-v1.0.0/main-data/svlip_model_language_pref
 LIVE_ASR_CONFIG_BLOB = "advisors/collabra-20018-v1.0.0/main-data/live_asr_config.json"
 MAIN_BACKEND_URL = os.environ.get("MAIN_BACKEND_URL", "https://api.otmega.com")
 
+_LIVE_ASR_MODELS = {
+    'whisper-large-v3',
+    'whisper-large-v3-turbo',
+    'gpt-4o-transcribe',
+    'gpt-4o-mini-transcribe',
+}
 _LIVE_ASR_CONFIG_DEFAULT: dict = {
     "active_model": "whisper-large-v3",
-    "available_models": ["whisper-large-v3", "whisper-large-v3-turbo"],
+    "available_models": sorted(_LIVE_ASR_MODELS),
 }
 
 _storage_client: storage.Client | None = None
@@ -120,8 +126,9 @@ def get_live_asr_config():
         blob = _get_storage().bucket(BUCKET_NAME).blob(LIVE_ASR_CONFIG_BLOB)
         if blob.exists():
             config = json.loads(blob.download_as_text(encoding="utf-8"))
-            if config.get("active_model") not in ('whisper-large-v3', 'whisper-large-v3-turbo'):
+            if config.get("active_model") not in _LIVE_ASR_MODELS:
                 config["active_model"] = "whisper-large-v3"
+            config["available_models"] = sorted(_LIVE_ASR_MODELS)
         else:
             config = _LIVE_ASR_CONFIG_DEFAULT.copy()
         return jsonify({"status": "ok", "config": config})
@@ -136,12 +143,12 @@ def set_live_asr_config():
     """ذخیره تنظیمات LASR-PTT در GCS."""
     payload = request.get_json(silent=True) or {}
     active_model = str(payload.get("active_model") or "").strip()
-    if active_model not in ('whisper-large-v3', 'whisper-large-v3-turbo'):
-        return jsonify({"status": "error", "message": "active_model must be whisper-large-v3 or whisper-large-v3-turbo"}), 400
+    if active_model not in _LIVE_ASR_MODELS:
+        return jsonify({"status": "error", "message": f"active_model must be one of: {', '.join(sorted(_LIVE_ASR_MODELS))}"}), 400
     try:
         config = {
             "active_model": active_model,
-            "available_models": ["whisper-large-v3", "whisper-large-v3-turbo"],
+            "available_models": sorted(_LIVE_ASR_MODELS),
         }
         blob = _get_storage().bucket(BUCKET_NAME).blob(LIVE_ASR_CONFIG_BLOB)
         blob.upload_from_string(
