@@ -258,6 +258,35 @@ export function applyUiTextsMatrix(payload: {
   return postJson<UiTextsApplyResponse>('/api/console/ui-texts/apply', payload);
 }
 
+export type UiTextsRegenerateResult = {
+  language: string;
+  filename: string;
+  path: string;
+  repo_paths: string[];
+  key_count: number;
+  removed_key_count: number;
+  removed_keys: string[];
+  empty_key_count: number;
+  content: string;
+};
+
+export type UiTextsRegenerateResponse = {
+  status: string;
+  write_enabled: boolean;
+  english_key_count: number;
+  applied_language_count: number;
+  applied_languages: string[];
+  results: UiTextsRegenerateResult[];
+  repo_dirs: string[];
+  persistence_note: string;
+};
+
+export function regenerateUiTextsFromEnglish(payload: {
+  languages: string[];
+}): Promise<UiTextsRegenerateResponse> {
+  return postJson<UiTextsRegenerateResponse>('/api/console/ui-texts/regenerate-from-english', payload);
+}
+
 export function fetchUiTextsLlmOptions(): Promise<UiTextsLlmOptionsResponse> {
   return getJson<UiTextsLlmOptionsResponse>('/api/console/ui-texts/llm-options');
 }

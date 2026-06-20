@@ -1,7 +1,7 @@
 // FILE: ~/otmega/otmega_app/console/admin_frontend/src/pages/UiTextsMatrixPage.tsx
 // ماموریت: صفحه spreadsheet کنسولی برای مشاهده، ویرایش موقت و خروجی گرفتن از کلیدهای UI Texts.
 
-import { CheckSquare, Database, Download, Eye, EyeOff, FileCode2, FileSpreadsheet, Loader2, Plus, RefreshCw, Search, Sparkles, Trash2, WrapText } from 'lucide-react';
+import { CheckSquare, Database, Download, Eye, EyeOff, FileCode2, FileSpreadsheet, Loader2, Plus, RefreshCw, RotateCcw, Search, Sparkles, Trash2, WrapText } from 'lucide-react';
 import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from 'react';
 import {
   applyUiTextsMatrix,
@@ -9,10 +9,12 @@ import {
   fetchUiTextsLlmOptions,
   generateUiTextsAiSuggestions,
   generateUiTextsPatch,
+  regenerateUiTextsFromEnglish,
   type UiTextsLanguageSummary,
   type UiTextsLlmOption,
   type UiTextsMatrix,
   type UiTextsPatchResponse,
+  type UiTextsRegenerateResponse,
 } from '../api/consoleApi';
 
 const KEY_COLUMN = '__key__';
@@ -109,6 +111,10 @@ export default function UiTextsMatrixPage() {
   const [generating, setGenerating] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applyStatus, setApplyStatus] = useState<string | null>(null);
+  const [regenLanguages, setRegenLanguages] = useState<Set<string>>(new Set());
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenStatus, setRegenStatus] = useState<string | null>(null);
+  const [regenResult, setRegenResult] = useState<UiTextsRegenerateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function loadMatrix() {
@@ -175,6 +181,20 @@ export default function UiTextsMatrixPage() {
     [changes, matrix, orderedKeys, values],
   );
   const categoryCount = useMemo(() => new Set(orderedKeys.map((key) => rowMeta[key]?.category || 'Uncategorized')).size, [orderedKeys, rowMeta]);
+  const englishKeyCount = useMemo(() => summaries.en?.key_count || 0, [summaries]);
+  const syncInfo = useMemo(() => {
+    const enCount = summaries.en?.key_count || 0;
+    return (matrix?.languages || [])
+      .filter((language) => language !== 'en')
+      .map((language) => {
+        const summary = summaries[language];
+        const extras = summary?.missing_from_english.length || 0;
+        const fileKeys = summary?.fallback_key_count || 0;
+        const runtimeKeys = summary?.runtime_key_count ?? 0;
+        const needsSync = extras > 0 || fileKeys !== enCount || runtimeKeys !== enCount;
+        return { language, extras, fileKeys, runtimeKeys, needsSync };
+      });
+  }, [matrix, summaries]);
   const emptyAiCells = useMemo(() => {
     const cells: AiCell[] = [];
     for (const language of aiLanguages) {
@@ -394,6 +414,65 @@ export default function UiTextsMatrixPage() {
     }
   }
 
+  function toggleRegenLanguage(language: string) {
+    if (language === 'en') {
+      return;
+    }
+    setRegenLanguages((current) => {
+      const next = new Set(current);
+      if (next.has(language)) {
+        next.delete(language);
+      } else {
+        next.add(language);
+      }
+      return next;
+    });
+  }
+
+  function selectAllSyncableLanguages() {
+    setRegenLanguages(new Set(syncInfo.filter((info) => info.needsSync).map((info) => info.language)));
+  }
+
+  async function regenerateLanguages() {
+    const languages = [...regenLanguages].filter((language) => language !== 'en').sort();
+    if (languages.length === 0) {
+      return;
+    }
+    const confirmMessage = [
+      'Regenerate selected languages from English?',
+      '',
+      `Languages: ${languages.join(', ')}`,
+      '',
+      'For each language the key set is synced to English:',
+      '- extra keys (not in English) are REMOVED from the .py file and config_domain_registry',
+      '- missing English keys are added as empty',
+      '- existing translations for shared keys are kept',
+      '',
+      'Continue?',
+    ].join('\n');
+    if (!window.confirm(confirmMessage)) {
+      setRegenStatus('Regenerate cancelled.');
+      return;
+    }
+    setRegenerating(true);
+    setRegenStatus(`Regenerating ${languages.length} language(s) from English...`);
+    setRegenResult(null);
+    setError(null);
+    try {
+      const response = await regenerateUiTextsFromEnglish({ languages });
+      setRegenResult(response);
+      const removed = response.results.reduce((total, item) => total + item.removed_key_count, 0);
+      setRegenLanguages(new Set());
+      await loadMatrix();
+      setRegenStatus(`Done: ${response.applied_languages.join(', ')} synced to English (${response.english_key_count} keys, ${removed} extra removed).`);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Unable to regenerate languages from English.');
+      setRegenStatus(null);
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
   async function applyAiSuggestions(cells: AiCell[], label: string) {
     if (!selectedLlmKey || cells.length === 0) {
       return;
@@ -537,6 +616,63 @@ export default function UiTextsMatrixPage() {
           ))}
         </div>
         {aiStatus ? <div className="ui-texts-ai-status">{aiStatus}</div> : null}
+      </section>
+
+      <section className="console-panel ui-texts-regenerate">
+        <div className="ui-texts-ai-head">
+          <RotateCcw aria-hidden="true" size={17} />
+          <strong>Sync language to English</strong>
+          <small>
+            Regenerate a language from the English key set ({englishKeyCount} keys). Extra keys not in English are removed from the
+            .py file and config_domain_registry, missing English keys are added empty, existing translations are kept.
+          </small>
+          <small className="ui-texts-regenerate-persist-note">
+            Saved to the database immediately and permanently. The .py files are temporary on Cloud Run — to keep "file keys"
+            correct after a redeploy, download the generated files and overwrite them in your local repo (exact paths shown after regenerate), then redeploy.
+          </small>
+        </div>
+        <div className="ui-texts-ai-languages">
+          <button onClick={selectAllSyncableLanguages} type="button">Select all needing sync</button>
+          <button onClick={() => setRegenLanguages(new Set())} type="button">Clear</button>
+          {syncInfo.map(({ language, extras, fileKeys, needsSync }) => (
+            <label className={needsSync ? 'needs-sync' : ''} key={language}>
+              <input checked={regenLanguages.has(language)} onChange={() => toggleRegenLanguage(language)} type="checkbox" />
+              <span>{language}</span>
+              <small>{extras} extra · {fileKeys}/{englishKeyCount} file</small>
+            </label>
+          ))}
+        </div>
+        <div className="ui-texts-regenerate-actions">
+          <button disabled={regenerating || regenLanguages.size === 0} onClick={regenerateLanguages} type="button">
+            {regenerating ? <Loader2 aria-hidden="true" className="spin" size={16} /> : <RotateCcw aria-hidden="true" size={16} />}
+            Regenerate from English ({regenLanguages.size})
+          </button>
+          {regenStatus ? <span className="ui-texts-apply-status">{regenStatus}</span> : null}
+        </div>
+        {regenResult ? (
+          <div className="ui-texts-regenerate-result">
+            <div className="ui-texts-regenerate-howto">
+              <strong>Make it permanent (so a redeploy keeps {regenResult.english_key_count} keys):</strong>
+              <span>
+                The database is already saved. Download each file below and overwrite the same-named file in BOTH local repo
+                folders, then run your normal redeploy:
+              </span>
+              <ul>
+                {regenResult.repo_dirs.map((dir) => (
+                  <li key={dir}><code>{dir}/&lt;lang&gt;.py</code></li>
+                ))}
+              </ul>
+            </div>
+            <div className="ui-texts-regenerate-downloads">
+              {regenResult.results.map((item) => (
+                <button key={item.filename} onClick={() => downloadText(item.filename, item.content, 'text/x-python;charset=utf-8')} title={`Overwrite: ${item.repo_paths.join('  +  ')}`} type="button">
+                  <Download aria-hidden="true" size={14} />
+                  {item.filename} ({item.key_count} keys, -{item.removed_key_count})
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="console-panel ui-texts-add-row">

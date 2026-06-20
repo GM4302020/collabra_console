@@ -21,6 +21,12 @@ ADMIN_BACKEND_ROOT = Path(__file__).resolve().parents[1]
 PACKAGED_UI_TEXTS_DIR = ADMIN_BACKEND_ROOT / "assets" / "ui_texts"
 REPO_UI_TEXTS_DIR = ADMIN_BACKEND_ROOT.parent.parent / "backend" / "advisor" / "settings" / "ui_texts"
 UI_TEXTS_DIR = Path(os.environ.get("CONSOLE_UI_TEXTS_DIR") or (REPO_UI_TEXTS_DIR if REPO_UI_TEXTS_DIR.exists() else PACKAGED_UI_TEXTS_DIR))
+# مسیرهای دائمی ریپو که هنگام deploy داخل ایمیج پخته می‌شوند. فایل دانلودی باید روی هر دو بازنویسی شود
+# تا بعد از redeploy «file keys» درست بماند (کنسول روی Cloud Run نمی‌تواند مستقیم به این فایل‌های لوکال بنویسد).
+REPO_UI_TEXTS_RELATIVE_DIRS = [
+    "backend/advisor/settings/ui_texts",
+    "console/admin_backend/assets/ui_texts",
+]
 UI_TEXT_KEY_LINE = re.compile(r'^\s*"([^"]+)"\s*:')
 ADVISOR_ID = os.environ.get("CONSOLE_ADVISOR_ID", "20018")
 WF1_LLM_FALLBACK_OPTIONS = [
@@ -828,4 +834,97 @@ def ui_texts_apply():
         "applied_languages": applied_languages,
         "changed_key_count": sum(len(values) for values in safe_changes.values()),
         "python_files": python_files,
+    })
+
+
+def _english_key_order_for_regenerate() -> list[str]:
+    """کلیدهای زبان انگلیسی به‌ترتیب فایل en.py (مرجع key set). در نبود فایل، از registry می‌خواند."""
+    english_file_path = UI_TEXTS_DIR / "en.py"
+    english_keys = list(_read_ui_texts_file(english_file_path).keys()) if english_file_path.exists() else []
+    if english_keys:
+        return english_keys
+    registry_texts, _ = _fetch_ui_texts_registry_payloads()
+    return list(registry_texts.get("en", {}).keys())
+
+
+def _current_language_texts(language: str) -> dict[str, str]:
+    """مقادیر فعلی یک زبان: ابتدا registry (runtime)، سپس fallback به فایل پایتون."""
+    payload = _fetch_ui_texts_registry_payload(language)
+    if isinstance(payload, dict) and isinstance(payload.get("texts"), dict):
+        return {str(key): str(value) for key, value in payload["texts"].items()}
+    file_path = UI_TEXTS_DIR / f"{language}.py"
+    return _read_ui_texts_file(file_path) if file_path.exists() else {}
+
+
+@config_bp.post("/api/console/ui-texts/regenerate-from-english")
+@require_capability("console.apply_ui_texts_matrix")
+def ui_texts_regenerate_from_english():
+    """
+    یک یا چند زبان را از روی key set انگلیسی بازتولید می‌کند:
+      - کلیدهای اضافه (در زبان هست ولی در en نیست) از فایل پایتون و config_domain_registry حذف می‌شوند.
+      - کلیدهای کمبود (در en هست ولی در زبان نیست) با مقدار خالی اضافه می‌شوند.
+      - ترجمه‌های موجودِ کلیدهای مشترک حفظ می‌شوند.
+    انگلیسی هرگز هدف نیست (مرجع است). این endpoint مستقل است و هیچ مسیر فعلی را تغییر نمی‌دهد.
+    """
+    payload = request.get_json(silent=True) or {}
+    requested_languages = payload.get("languages") if isinstance(payload, dict) else []
+    if not isinstance(requested_languages, list) or not requested_languages:
+        return jsonify({"status": "error", "message": "At least one target language is required."}), 400
+
+    english_keys = _english_key_order_for_regenerate()
+    if not english_keys:
+        return jsonify({"status": "error", "message": "English key set could not be resolved."}), 500
+    english_key_set = set(english_keys)
+
+    target_languages = sorted({
+        str(language).strip()
+        for language in requested_languages
+        if isinstance(language, str) and str(language).strip() and str(language).strip() != "en"
+    })
+    if not target_languages:
+        return jsonify({"status": "error", "message": "Choose at least one non-English language to regenerate."}), 400
+    if not UI_TEXTS_DIR.exists():
+        return jsonify({"status": "error", "message": f"UI texts directory does not exist: {UI_TEXTS_DIR}"}), 500
+
+    applied_languages: list[str] = []
+    results: list[dict] = []
+    try:
+        for language in target_languages:
+            current_values = _current_language_texts(language)
+            removed_keys = sorted(set(current_values) - english_key_set)
+            added_keys = sorted(key for key in english_keys if not (current_values.get(key) or "").strip())
+            synced_values = {key: current_values.get(key, "") for key in english_keys}
+            content = _render_python_file(language, synced_values, english_keys)
+            target_path = UI_TEXTS_DIR / f"{language}.py"
+            target_path.write_text(content, encoding="utf-8")
+            updated_rows = _apply_ui_texts_registry_payload(language, synced_values)
+            if updated_rows < 1:
+                raise RuntimeError(f"No active config_domain_registry row was updated for ui_texts_{language}.")
+            applied_languages.append(language)
+            results.append({
+                "language": language,
+                "filename": f"{language}.py",
+                "path": str(target_path),
+                "repo_paths": [f"{base}/{language}.py" for base in REPO_UI_TEXTS_RELATIVE_DIRS],
+                "key_count": len(synced_values),
+                "removed_key_count": len(removed_keys),
+                "removed_keys": removed_keys[:100],
+                "empty_key_count": len(added_keys),
+                "content": content,
+            })
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc), "applied_languages": applied_languages}), 502
+
+    return jsonify({
+        "status": "ok",
+        "write_enabled": True,
+        "english_key_count": len(english_keys),
+        "applied_language_count": len(applied_languages),
+        "applied_languages": applied_languages,
+        "results": results,
+        "repo_dirs": REPO_UI_TEXTS_RELATIVE_DIRS,
+        "persistence_note": (
+            "Database is updated permanently. To keep the .py fallback files in sync across redeploys, "
+            "overwrite each downloaded file onto BOTH local repo paths shown below, then redeploy."
+        ),
     })

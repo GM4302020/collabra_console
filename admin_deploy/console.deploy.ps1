@@ -105,6 +105,38 @@ Invoke-CheckedStep "Attach frontend bundle to Cloud Run source package" {
     }
 }
 
+Invoke-CheckedStep "Sync UI Texts .py files from database (source of truth)" {
+    $SyncScript = Join-Path $PSScriptRoot "sync_ui_texts_from_db.py"
+    if (-not (Test-Path $SyncScript)) {
+        throw "UI Texts sync script not found: $SyncScript"
+    }
+
+    $SupabaseUrl = $null
+    $SupabaseKey = $null
+    $RawUrl = gcloud secrets versions access latest --secret="PRG2_SUPABASE_URL" --project $ProjectId 2>$null
+    if ($LASTEXITCODE -eq 0 -and $RawUrl) { $SupabaseUrl = $RawUrl.Trim() }
+    $RawKey = gcloud secrets versions access latest --secret="PRG2_SUPABASE_SERVICE_ROLE_KEY" --project $ProjectId 2>$null
+    if ($LASTEXITCODE -eq 0 -and $RawKey) { $SupabaseKey = $RawKey.Trim() }
+
+    if (-not $SupabaseUrl -or -not $SupabaseKey) {
+        Write-Host "WARNING: Supabase secrets unavailable locally. Keeping existing .py files (no DB sync)."
+    }
+
+    try {
+        if ($SupabaseUrl -and $SupabaseKey) {
+            $env:PRG2_SUPABASE_URL = $SupabaseUrl
+            $env:PRG2_SUPABASE_SERVICE_ROLE_KEY = $SupabaseKey
+        }
+        python $SyncScript --ui-texts-dir $SourceUiTextsPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "UI Texts DB sync failed with exit code $LASTEXITCODE."
+        }
+    } finally {
+        Remove-Item Env:\PRG2_SUPABASE_SERVICE_ROLE_KEY -ErrorAction SilentlyContinue
+        Remove-Item Env:\PRG2_SUPABASE_URL -ErrorAction SilentlyContinue
+    }
+}
+
 Invoke-CheckedStep "Attach UI Texts language files to Cloud Run source package" {
     $ResolvedBackend = Resolve-Path $BackendPath
     if (-not (Test-Path $SourceUiTextsPath)) {

@@ -1,5 +1,5 @@
 # FILE: ~/otmega/otmega_app/backend/advisor/settings/ui_texts/fr.py
-# Mission: depot canonique des textes francais de l'interface utilisateur pour i18n.
+# ماموریت: نگهداری متن‌های اصلی انگلیسی رابط و پیام‌های سیستمی ادوایزر برای استفاده در i18n.
 
 UI_TEXTS = {
     # ==============================================
@@ -36,15 +36,21 @@ UI_TEXTS = {
     # ==============================================
     # === 3. Authentication (Auth) ===
     # ==============================================
+
+    # --- Window Titles ---
     "AUTH_HEADER_LOGIN": "Connectez-vous au reseau des conseillers",
     "AUTH_HEADER_SIGNUP": "Creez votre compte unifie",
     "AUTH_HEADER_LOGIN_NETWORK": "Connectez-vous au reseau des conseillers",
     "AUTH_HEADER_SIGNUP_UNIFIED": "Creez votre compte unifie",
+
+    # --- Buttons ---
     "AUTH_BUTTON_LOGIN": "Connexion",
     "AUTH_BUTTON_SIGNUP": "Creer un compte",
     "AUTH_BUTTON_GOOGLE": "Continuer avec Google",
     "AUTH_BUTTON_FORGOT_PASSWORD": "Mot de passe oublie",
     "AUTH_BUTTON_SEND_RESET_LINK": "Envoyer le lien de reinitialisation",
+
+    # --- Helper Strings & Links ---
     "AUTH_PROMPT_SIGNUP": "Vous n'avez pas de compte ? Inscrivez-vous",
     "AUTH_PROMPT_LOGIN": "Vous avez deja un compte ? Connectez-vous",
     "AUTH_HELPER_TEXT_SIGNUP": "Vous creez un compte unifie que vous pouvez utiliser pour acceder a tous les conseillers de cette plateforme.",
@@ -55,12 +61,15 @@ UI_TEXTS = {
     "AUTH_FORGOT_PASSWORD_TITLE": "Reinitialiser votre mot de passe",
     "AUTH_FORGOT_PASSWORD_DESCRIPTION": "Saisissez votre adresse e-mail et nous vous enverrons un lien pour reinitialiser votre mot de passe.",
     "AUTH_FORGOT_PASSWORD_EMAIL_LABEL": "E-mail",
+
+    # --- Status & Error Messages ---
     "AUTH_STATUS_LOADING_LOGIN": "Connexion en cours...",
     "AUTH_STATUS_LOADING_SIGNUP": "Creation de votre compte...",
     "AUTH_STATUS_LOADING_RESET": "Envoi du lien de reinitialisation...",
     "AUTH_STATUS_SUCCESS_LOGIN": "Connexion reussie ! Rechargement...",
     "AUTH_STATUS_SUCCESS_RESET": "Lien de reinitialisation envoye avec succes. Veuillez verifier votre e-mail.",
     "AUTH_FORGOT_PASSWORD_SUCCESS": "Lien de reinitialisation du mot de passe envoye avec succes. Veuillez verifier votre e-mail.",
+
     "AUTH_ERROR_INVALID_CREDENTIALS": "E-mail ou mot de passe invalide.",
     "AUTH_ERROR_EMAIL_EXISTS": "Un compte avec cet e-mail existe deja dans le reseau des conseillers.",
     "AUTH_ERROR_EMAIL_EXISTS_DETAILED": "Un compte avec cet e-mail existe deja. Veuillez vous connecter. Vous etes actuellement membre de :",
@@ -69,9 +78,13 @@ UI_TEXTS = {
     "AUTH_ERROR_EMAIL_PASSWORD_REQUIRED": "L'e-mail et le mot de passe sont requis.",
     "AUTH_ERROR_FAILED_MEMBERSHIP": "Compte cree, mais la configuration de l'adhesion a echoue. Veuillez contacter le support.",
     "AUTH_ERROR_DEFAULT": "Une erreur s'est produite. Veuillez reessayer.",
+    "API_ERROR_GUEST_BANNER_PAYLOAD_REQUIRED": "",
+    "API_ERROR_USER_ZERO_GUEST_BANNER_ONLY": "",
     "AUTH_FORGOT_PASSWORD_ERROR": "Echec de l'envoi du lien de reinitialisation. Veuillez reessayer.",
     "INVITE_REPLY_EMAIL_SENT": "L'e-mail d'invitation Collabra a ete envoye a votre ami a l'adresse {invitee_email}.",
     "INVITE_REPLY_EMAIL_RESENT": "L'e-mail d'invitation Collabra a ete renvoye a votre ami a l'adresse {invitee_email}.",
+    
+    # --- Password Toggle ---
     "AUTH_PASSWORD_TOGGLE_SHOW": "Afficher le mot de passe",
     "AUTH_PASSWORD_TOGGLE_HIDE": "Masquer le mot de passe",
 
@@ -248,6 +261,7 @@ UI_TEXTS = {
     "MENU_FORWARD": "Transferer",
     "MENU_REMOVE_INVITATION": "Supprimer l'invitation",
     "MENU_REMOVE_FROM_LIST": "Retirer de la liste",
+    "MENU_GOODBYE_GUEST": "",
     "MENU_ADD_TO_LIST": "Ajouter a la liste",
     "MENU_REJECT_INVITATION": "Rejeter l'invitation",
     "MENU_FRONTEND_VERSION": "Version frontend",
@@ -427,6 +441,38 @@ UI_TEXTS = {
     "CHAT_DELETE_WINDOW_SECONDS_LABEL": "Secondes de la fenetre",
     "CHAT_DELETE_WINDOW_SECONDS_INVALID": "Saisissez un nombre entier superieur ou egal a 0.",
     "CHAT_DELETE_SAVE_BUTTON": "Enregistrer la fenetre de suppression",
+    "GUEST_BANNER_CONTROL_TITLE": "",
+    "GUEST_BANNER_CONTROL_LABEL": "",
+    "GUEST_BANNER_CONTROL_ENABLED_LABEL": "",
+    "GUEST_BANNER_CONTROL_HELPER": "",
+    "GUEST_BANNER_CONTROL_HELPER_FALLBACK": "",
+    "GUEST_BANNER_CONTROL_HELPER_SAVED": "",
+    "GUEST_BANNER_CONTROL_HELPER_SAVE_FAILED": "",
+    "GUEST_BANNER_CONTROL_REVOKED_COUNT": "",
+    "GUEST_BANNER_PENDING_TTL_MINUTES_LABEL": "",
+    "GUEST_BANNER_PENDING_TTL_CURRENT": "",
+    "GUEST_BANNER_PENDING_TTL_INVALID": "",
+    "GUEST_BANNER_CONTROL_SAVE_BUTTON": "",
+    "GUEST_QR_LOADING": "",
+    "GUEST_QR_READY": "",
+    "GUEST_QR_ALT": "",
+    "GUEST_QR_LOAD_FAILED": "",
+    "GUEST_SESSION_ACTIVE": "",
+    "GUEST_PUBLIC_TITLE": "",
+    "GUEST_PUBLIC_CONNECTING": "",
+    "GUEST_PUBLIC_CONNECTED": "",
+    "GUEST_PUBLIC_UNAVAILABLE": "",
+    "GUEST_PUBLIC_SEND_FAILED": "",
+    "UI_TEXTS_RUNTIME_TITLE": "",
+    "UI_TEXTS_RUNTIME_BACKEND": "",
+    "UI_TEXTS_RUNTIME_CACHED": "",
+    "UI_TEXTS_RUNTIME_DEFAULTS": "",
+    "UI_TEXTS_RUNTIME_SAVED": "",
+    "UI_TEXTS_RUNTIME_SAVE_FAILED": "",
+    "UI_TEXTS_RUNTIME_DEVICE_LANGUAGE_LABEL": "",
+    "UI_TEXTS_RUNTIME_ENABLE_DEVICE_LANGUAGE": "",
+    "UI_TEXTS_RUNTIME_ENABLED_NOTE": "",
+    "UI_TEXTS_RUNTIME_DISABLED_NOTE": "",
     "PROFILE_VISIBILITY_TITLE": "Visibilite du profil",
     "PROFILE_VISIBILITY_LOGIN_REQUIRED": "Vous devez etre connecte pour gerer la visibilite du compte.",
     "PROFILE_VISIBILITY_HELPER": "Ce commutateur met a jour uniquement l'etat de visibilite de votre compte. La decouvrabilite et le comportement des listes de bannieres restent inchanges dans cette phase.",
@@ -552,6 +598,7 @@ UI_TEXTS = {
     "GENERAL_UNKNOWN_USER": "Utilisateur inconnu",
     "GENERAL_GUEST": "Invite",
     "ADVISOR_FOR_CLIENT": "Conseiller pour {client_display_name}",
+    "GUEST_FOR_CLIENT": "",
     "AUTH_ERROR_TOKEN_PASSWORD_REQUIRED": "Le jeton et le mot de passe sont requis",
     "AUTH_ERROR_REQUEST_BODY_JSON": "Le corps de la requete doit etre au format JSON",
     "AUTH_ERROR_INVITATION_TOKEN_INVALID_EXPIRED": "Jeton d'invitation invalide ou expire",
@@ -570,6 +617,7 @@ UI_TEXTS = {
     "API_ERROR_USER_ZERO_FRONTEND_VERSION_ONLY": "Seul l'Utilisateur Zero peut acceder au service de controle de version frontend.",
     "API_ERROR_USER_ZERO_FRONTEND_VERSION_INSPECT_ONLY": "Seul l'Utilisateur Zero peut inspecter la version frontend d'un autre utilisateur.",
     "API_ERROR_USER_ZERO_CHAT_DELETE_ONLY": "Seul l'Utilisateur Zero peut acceder au service de controle de suppression de discussion.",
+    "API_ERROR_USER_ZERO_UI_TEXTS_RUNTIME_ONLY": "",
     "API_ERROR_USER_ZERO_PERMANENT_DELETE_ONLY": "Seul l'Utilisateur Zero peut supprimer definitivement un compte utilisateur.",
     "API_ERROR_INVALID_REQUEST_PAYLOAD": "Payload de requete invalide.",
     "API_ERROR_INTERNAL_SERVER": "Erreur interne du serveur",
@@ -586,6 +634,7 @@ UI_TEXTS = {
     "API_ERROR_ZONE_VISIBILITY_PAYLOAD_REQUIRED": "Le payload de visibilite des zones est requis.",
     "API_ERROR_FRONTEND_VERSION_PAYLOAD_REQUIRED": "Le payload de version frontend est requis.",
     "API_ERROR_CHAT_DELETE_PAYLOAD_REQUIRED": "Le payload de controle de suppression de discussion est requis.",
+    "API_ERROR_UI_TEXTS_RUNTIME_PAYLOAD_REQUIRED": "",
     "API_ERROR_AUTH_USER_ID_REQUIRED": "L'identifiant utilisateur authentifie est requis.",
     "API_ERROR_AUTH_VIEWER_USER_ID_REQUIRED": "L'identifiant utilisateur spectateur authentifie est requis.",
     "API_ERROR_AUTH_ACTOR_USER_ID_REQUIRED": "L'identifiant utilisateur acteur authentifie est requis.",
