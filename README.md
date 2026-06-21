@@ -15,7 +15,7 @@ Official Cloud Run deployment from PowerShell. This is the supported validation 
 
 ```powershell
 Set-Location C:\Projects\otmega\otmega_app\console\admin_deploy
-.\cloudrun.deploy.ps1
+.\console.deploy.ps1
 ```
 
 The deploy script verifies the active `gcloud` account, required Secret Manager entries, frontend production build, backend tests, backend Python compilation, and the attached `static_frontend/index.html` before publishing Cloud Run.
@@ -56,6 +56,7 @@ console/
 |       |-- test_session.py
 |       `-- test_ui_texts_matrix.py
 |-- admin_deploy/
+|   |-- console.deploy.ps1
 |   |-- cloudrun.deploy.ps1
 |   `-- firebase-hosting.deploy.ps1
 `-- admin_frontend/

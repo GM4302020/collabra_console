@@ -1,12 +1,13 @@
 # FILE: ~/otmega/otmega_app/console/admin_backend/admin_api/operational_routes.py
 # ماموریت: ارائه inventory و probe زنده زیرساخت های Collabra برای داشبورد Admin Console.
 
+import json
 import os
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -82,9 +83,71 @@ def _supabase_project_id(url: str) -> str:
     return host.split(".")[0] if host.endswith(".supabase.co") else ""
 
 
+def _supabase_base_url() -> str:
+    return (os.environ.get("PRG2_SUPABASE_URL") or "https://db.otmega.com").rstrip("/")
+
+
+def _supabase_service_role() -> str | None:
+    return os.environ.get("PRG2_SUPABASE_SERVICE_ROLE_KEY")
+
+
+def _supabase_headers() -> dict | None:
+    service_role = _supabase_service_role()
+    if not service_role:
+        return None
+    return {
+        "Accept": "application/json",
+        "apikey": service_role,
+        "Authorization": f"Bearer {service_role}",
+    }
+
+
+def _utc_gte(hours: int) -> str:
+    return f"gte.{(datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()}"
+
+
+def _read_supabase_rows(table: str, params: dict[str, str], *, timeout: int = 6) -> tuple[list[dict], int, int]:
+    headers = _supabase_headers()
+    if not headers:
+        raise RuntimeError("missing_service_role")
+
+    query = urllib.parse.urlencode(params, safe=",().:*")
+    url = f"{_supabase_base_url()}/rest/v1/{table}?{query}"
+    start = time.perf_counter()
+    probe_request = urllib.request.Request(url, headers=headers, method="GET")
+    with urllib.request.urlopen(probe_request, timeout=timeout) as response:
+        payload = response.read().decode("utf-8")
+        rows = json.loads(payload or "[]")
+        if not isinstance(rows, list):
+            rows = []
+        return rows, response.status, _elapsed_ms(start)
+
+
+def _ok_or_warn_service_role_resource(
+    *,
+    resource_id: str,
+    group: str,
+    name: str,
+    kind: str,
+    summary: str,
+    primary_url: str | None = None,
+    metrics: list[dict] | None = None,
+) -> dict:
+    return _resource(
+        resource_id=resource_id,
+        group=group,
+        name=name,
+        kind=kind,
+        status="warn",
+        summary=summary,
+        primary_url=primary_url,
+        metrics=metrics or [_metric("service role", "missing", "warn")],
+    )
+
+
 def _check_supabase() -> dict:
-    supabase_url = (os.environ.get("PRG2_SUPABASE_URL") or "https://db.otmega.com").rstrip("/")
-    service_role = os.environ.get("PRG2_SUPABASE_SERVICE_ROLE_KEY")
+    supabase_url = _supabase_base_url()
+    service_role = _supabase_service_role()
     project_id = _supabase_project_id(supabase_url)
     console_url = f"https://supabase.com/dashboard/project/{project_id}" if project_id else None
     start = time.perf_counter()
@@ -141,6 +204,269 @@ def _check_supabase() -> dict:
             _link("DB proxy", "https://db.otmega.com"),
         ],
     )
+
+
+def _check_db_proxy_authenticated() -> dict:
+    if not _supabase_service_role():
+        return _ok_or_warn_service_role_resource(
+            resource_id="cloudflare-db-proxy",
+            group="Edge",
+            name="DB Proxy",
+            kind="Cloudflare Worker",
+            summary="DB proxy is protected; authenticated probe needs PRG2_SUPABASE_SERVICE_ROLE_KEY.",
+            primary_url="https://db.otmega.com",
+        )
+
+    try:
+        rows, http_status, latency_ms = _read_supabase_rows(
+            "profiles",
+            {
+                "select": "user_id",
+                "advisor_id": f"eq.{ADVISOR_ID}",
+                "limit": "1",
+            },
+        )
+        status = "ok" if 200 <= http_status < 300 else "warn"
+        summary = f"Authenticated DB proxy probe returned HTTP {http_status}."
+        return _resource(
+            resource_id="cloudflare-db-proxy",
+            group="Edge",
+            name="DB Proxy",
+            kind="Cloudflare Worker",
+            status=status,
+            summary=summary,
+            primary_url="https://db.otmega.com",
+            latency_ms=latency_ms,
+            metrics=[
+                _metric("HTTP", str(http_status), status),
+                _metric("sample rows", str(len(rows)), "ok" if rows else "warn"),
+            ],
+            links=[_link("REST probe", "https://db.otmega.com/rest/v1/profiles")],
+        )
+    except Exception as exc:
+        return _resource(
+            resource_id="cloudflare-db-proxy",
+            group="Edge",
+            name="DB Proxy",
+            kind="Cloudflare Worker",
+            status="error",
+            summary=f"Authenticated DB proxy probe failed: {type(exc).__name__}.",
+            primary_url="https://db.otmega.com",
+            metrics=[_metric("probe", "failed", "error")],
+        )
+
+
+def _check_chat_activity() -> dict:
+    if not _supabase_service_role():
+        return _ok_or_warn_service_role_resource(
+            resource_id="db-chat-activity",
+            group="Data",
+            name="Chat Activity",
+            kind="Messages / WF1",
+            summary="Chat activity probe needs PRG2_SUPABASE_SERVICE_ROLE_KEY.",
+        )
+
+    try:
+        rows_1h, http_status, latency_ms = _read_supabase_rows(
+            "messages",
+            {
+                "select": "id,status,type,content_pivot,text_translations,created_at",
+                "advisor_id": f"eq.{ADVISOR_ID}",
+                "created_at": _utc_gte(1),
+                "limit": "1000",
+            },
+        )
+        rows_24h, _, latency_24h = _read_supabase_rows(
+            "messages",
+            {
+                "select": "id,status,type,created_at",
+                "advisor_id": f"eq.{ADVISOR_ID}",
+                "created_at": _utc_gte(24),
+                "limit": "1000",
+            },
+        )
+        failed_1h = sum(1 for row in rows_1h if row.get("status") == "failed")
+        enriched_1h = sum(
+            1
+            for row in rows_1h
+            if row.get("content_pivot") or (isinstance(row.get("text_translations"), dict) and row.get("text_translations"))
+        )
+        status = "warn" if failed_1h else "ok"
+        return _resource(
+            resource_id="db-chat-activity",
+            group="Data",
+            name="Chat Activity",
+            kind="Messages / WF1",
+            status=status,
+            summary=f"Read-only message probe found {len(rows_1h)} messages in the last hour.",
+            latency_ms=latency_ms + latency_24h,
+            metrics=[
+                _metric("1h messages", str(len(rows_1h)), "neutral"),
+                _metric("24h messages", str(len(rows_24h)), "neutral"),
+                _metric("1h failed", str(failed_1h), "warn" if failed_1h else "ok"),
+                _metric("1h enriched", str(enriched_1h), "neutral"),
+                _metric("HTTP", str(http_status), "ok"),
+            ],
+        )
+    except Exception as exc:
+        return _resource(
+            resource_id="db-chat-activity",
+            group="Data",
+            name="Chat Activity",
+            kind="Messages / WF1",
+            status="error",
+            summary=f"Chat activity probe failed: {type(exc).__name__}.",
+            metrics=[_metric("probe", "failed", "error")],
+        )
+
+
+def _check_unread_pressure() -> dict:
+    if not _supabase_service_role():
+        return _ok_or_warn_service_role_resource(
+            resource_id="db-unread-pressure",
+            group="Data",
+            name="Unread Pressure",
+            kind="Conversation participants",
+            summary="Unread pressure probe needs PRG2_SUPABASE_SERVICE_ROLE_KEY.",
+        )
+
+    try:
+        rows, http_status, latency_ms = _read_supabase_rows(
+            "conversation_participants",
+            {"select": "unread_count", "limit": "5000"},
+        )
+        unread_values = [int(row.get("unread_count") or 0) for row in rows if isinstance(row, dict)]
+        total_unread = sum(unread_values)
+        rows_with_unread = sum(1 for value in unread_values if value > 0)
+        max_unread = max(unread_values or [0])
+        status = "warn" if max_unread >= 50 else "ok"
+        return _resource(
+            resource_id="db-unread-pressure",
+            group="Data",
+            name="Unread Pressure",
+            kind="Conversation participants",
+            status=status,
+            summary="Unread counters are read directly from conversation_participants.",
+            latency_ms=latency_ms,
+            metrics=[
+                _metric("total unread", str(total_unread), "neutral"),
+                _metric("rows unread", str(rows_with_unread), "neutral"),
+                _metric("max unread", str(max_unread), "warn" if max_unread >= 50 else "ok"),
+                _metric("HTTP", str(http_status), "ok"),
+            ],
+        )
+    except Exception as exc:
+        return _resource(
+            resource_id="db-unread-pressure",
+            group="Data",
+            name="Unread Pressure",
+            kind="Conversation participants",
+            status="error",
+            summary=f"Unread pressure probe failed: {type(exc).__name__}.",
+            metrics=[_metric("probe", "failed", "error")],
+        )
+
+
+def _check_profile_presence() -> dict:
+    if not _supabase_service_role():
+        return _ok_or_warn_service_role_resource(
+            resource_id="db-profile-presence",
+            group="Data",
+            name="Profile Presence",
+            kind="Profiles",
+            summary="Profile presence probe needs PRG2_SUPABASE_SERVICE_ROLE_KEY.",
+        )
+
+    try:
+        rows, http_status, latency_ms = _read_supabase_rows(
+            "profiles",
+            {
+                "select": "online_status,role,tier",
+                "advisor_id": f"eq.{ADVISOR_ID}",
+                "limit": "5000",
+            },
+        )
+        online = sum(1 for row in rows if row.get("online_status") == "online")
+        away = sum(1 for row in rows if row.get("online_status") == "away")
+        s_admin = sum(1 for row in rows if row.get("role") == "s_admin")
+        return _resource(
+            resource_id="db-profile-presence",
+            group="Data",
+            name="Profile Presence",
+            kind="Profiles",
+            status="ok",
+            summary=f"Profile presence read {len(rows)} Collabra profiles for advisor {ADVISOR_ID}.",
+            latency_ms=latency_ms,
+            metrics=[
+                _metric("profiles", str(len(rows)), "neutral"),
+                _metric("online", str(online), "ok" if online else "neutral"),
+                _metric("away", str(away), "neutral"),
+                _metric("s_admin", str(s_admin), "neutral"),
+                _metric("HTTP", str(http_status), "ok"),
+            ],
+        )
+    except Exception as exc:
+        return _resource(
+            resource_id="db-profile-presence",
+            group="Data",
+            name="Profile Presence",
+            kind="Profiles",
+            status="error",
+            summary=f"Profile presence probe failed: {type(exc).__name__}.",
+            metrics=[_metric("probe", "failed", "error")],
+        )
+
+
+def _check_notification_state() -> dict:
+    if not _supabase_service_role():
+        return _ok_or_warn_service_role_resource(
+            resource_id="db-notification-state",
+            group="Edge",
+            name="Notification State",
+            kind="FCM worker / dedupe",
+            summary="Notification state probe needs PRG2_SUPABASE_SERVICE_ROLE_KEY.",
+        )
+
+    try:
+        rows, http_status, latency_ms = _read_supabase_rows(
+            "message_notify_dedupe",
+            {
+                "select": "notify_state,route_selected,last_error,created_at,sent_at",
+                "advisor_id": f"eq.{ADVISOR_ID}",
+                "created_at": _utc_gte(24),
+                "limit": "1000",
+            },
+        )
+        sent = sum(1 for row in rows if row.get("notify_state") == "sent")
+        failed = sum(1 for row in rows if row.get("notify_state") == "failed")
+        pending = sum(1 for row in rows if row.get("notify_state") == "pending")
+        status = "warn" if failed or pending else "ok"
+        return _resource(
+            resource_id="db-notification-state",
+            group="Edge",
+            name="Notification State",
+            kind="FCM worker / dedupe",
+            status=status,
+            summary=f"Notification dedupe probe read {len(rows)} rows from the last 24 hours.",
+            latency_ms=latency_ms,
+            metrics=[
+                _metric("24h sent", str(sent), "ok" if sent else "neutral"),
+                _metric("24h failed", str(failed), "warn" if failed else "ok"),
+                _metric("24h pending", str(pending), "warn" if pending else "ok"),
+                _metric("HTTP", str(http_status), "ok"),
+            ],
+            links=[_link("Notification worker", "https://api.otmega.com")],
+        )
+    except Exception as exc:
+        return _resource(
+            resource_id="db-notification-state",
+            group="Edge",
+            name="Notification State",
+            kind="FCM worker / dedupe",
+            status="error",
+            summary=f"Notification state probe failed: {type(exc).__name__}.",
+            metrics=[_metric("probe", "failed", "error")],
+        )
 
 
 def _check_gcs() -> dict:
@@ -234,6 +560,106 @@ def _check_url(resource_id: str, group: str, name: str, kind: str, url: str, con
         console_url=console_url,
         latency_ms=_elapsed_ms(start),
         metrics=[_metric("HTTP", http_status, status)],
+    )
+
+
+def _check_files_proxy() -> dict:
+    url = "https://files.otmega.com"
+    start = time.perf_counter()
+    status = "unknown"
+    summary = "Files proxy endpoint was not checked."
+    http_status = "not checked"
+    security_state = "not checked"
+
+    try:
+        probe_request = urllib.request.Request(url, headers={"User-Agent": "otmega-admin-console/1.0"}, method="GET")
+        with urllib.request.urlopen(probe_request, timeout=5) as response:
+            http_status = str(response.status)
+            status = "ok" if response.status < 500 else "warn"
+            security_state = "public response"
+            summary = f"Files proxy returned HTTP {response.status}."
+    except urllib.error.HTTPError as exc:
+        http_status = str(exc.code)
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+
+        if exc.code in {400, 401, 403} and ("MissingSecurityHeader" in body or "Authorization" in body):
+            status = "ok"
+            security_state = "auth required"
+            summary = "Files proxy is reachable and rejects unauthenticated root access as expected."
+        else:
+            status = "warn" if exc.code < 500 else "error"
+            security_state = "unexpected response"
+            summary = f"Files proxy returned HTTP {exc.code}."
+    except Exception as exc:
+        status = "error"
+        security_state = "probe failed"
+        summary = f"Files proxy probe failed: {type(exc).__name__}."
+
+    return _resource(
+        resource_id="cloudflare-files-proxy",
+        group="Edge",
+        name="Files Proxy",
+        kind="Cloudflare Worker / GCS gateway",
+        status=status,
+        summary=summary,
+        primary_url=url,
+        latency_ms=_elapsed_ms(start),
+        metrics=[
+            _metric("HTTP", http_status, status),
+            _metric("security", security_state, "ok" if status == "ok" else status),
+        ],
+        links=[_link("Root check", url)],
+    )
+
+
+def _check_collabra_api() -> dict:
+    root_url = "https://api.otmega.com"
+    probe_url = f"{root_url}/api/get_ui_settings"
+    start = time.perf_counter()
+    status = "unknown"
+    summary = "Collabra API read probe was not checked."
+    http_status = "not checked"
+    probe_path = "/api/get_ui_settings"
+
+    try:
+        probe_request = urllib.request.Request(probe_url, headers={"User-Agent": "otmega-admin-console/1.0"}, method="GET")
+        with urllib.request.urlopen(probe_request, timeout=6) as response:
+            http_status = str(response.status)
+            status = "ok" if 200 <= response.status < 300 else "warn"
+            content_type = response.headers.get("Content-Type", "")
+            summary = f"Collabra read-only UI settings endpoint returned HTTP {response.status}."
+            if "application/json" not in content_type.lower():
+                status = "warn"
+                summary = f"Collabra API path returned HTTP {response.status}, but response is not JSON."
+    except urllib.error.HTTPError as exc:
+        http_status = str(exc.code)
+        status = "warn" if exc.code < 500 else "error"
+        summary = f"Collabra API read probe returned HTTP {exc.code}; health route/domain mapping needs review."
+    except Exception as exc:
+        status = "error"
+        summary = f"Collabra API read probe failed: {type(exc).__name__}."
+
+    return _resource(
+        resource_id="backend-api-domain",
+        group="Compute",
+        name="Collabra API",
+        kind="Cloud Run / API Domain",
+        status=status,
+        summary=summary,
+        primary_url=root_url,
+        latency_ms=_elapsed_ms(start),
+        metrics=[
+            _metric("HTTP", http_status, status),
+            _metric("probe", probe_path, "neutral"),
+        ],
+        links=[
+            _link("Read probe", probe_url),
+            _link("Root", root_url),
+        ],
     )
 
 
@@ -334,10 +760,14 @@ def operational_resources():
 
     resources = [
         _check_supabase(),
+        _check_db_proxy_authenticated(),
+        _check_chat_activity(),
+        _check_unread_pressure(),
+        _check_profile_presence(),
+        _check_notification_state(),
         _check_gcs(),
-        _check_url("cloudflare-db-proxy", "Edge", "DB Proxy", "Cloudflare Worker", "https://db.otmega.com/rest/v1/"),
-        _check_url("cloudflare-files-proxy", "Edge", "Files Proxy", "Cloudflare Worker", "https://files.otmega.com"),
-        _check_url("backend-api-domain", "Compute", "Collabra API", "Cloud Run / API Domain", "https://api.otmega.com/health"),
+        _check_files_proxy(),
+        _check_collabra_api(),
         *_static_resources(base_url),
     ]
     return jsonify(

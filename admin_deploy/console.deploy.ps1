@@ -1,4 +1,4 @@
-# FILE: ~/otmega/otmega_app/console/admin_deploy/cloudrun.deploy.ps1
+# FILE: ~/otmega/otmega_app/console/admin_deploy/console.deploy.ps1
 # ماموریت: اجرای deploy مستقیم Cloud Run برای سرویس otmega-console.
 
 $ErrorActionPreference = "Stop"
