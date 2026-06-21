@@ -19,6 +19,8 @@ operational_bp = Blueprint("console_operational", __name__)
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT") or "ot-ai-advisor"
 REGION = os.environ.get("CONSOLE_CLOUD_RUN_REGION") or os.environ.get("GOOGLE_CLOUD_REGION") or "us-central1"
 ADVISOR_ID = os.environ.get("CONSOLE_ADVISOR_ID", "20018")
+FIREBASE_HOSTING_SITE_ID = os.environ.get("FIREBASE_HOSTING_SITE_ID") or "ot-ai-advisor"
+FIREBASE_HOSTING_PRIMARY_URL = os.environ.get("FIREBASE_HOSTING_PRIMARY_URL") or "https://app.otmega.com"
 
 
 def _now_iso() -> str:
@@ -72,6 +74,358 @@ def _resource(
         "links": compact_links,
         "checked_at": _now_iso(),
     }
+
+
+def _cloudflare_config() -> dict:
+    return {
+        "api_token": os.environ.get("CLOUDFLARE_API_TOKEN"),
+        "account_id": os.environ.get("CLOUDFLARE_ACCOUNT_ID"),
+        "zone_id": os.environ.get("CLOUDFLARE_ZONE_ID"),
+        "zone_name": os.environ.get("CLOUDFLARE_ZONE_NAME") or "otmega.com",
+    }
+
+
+def _cloudflare_headers(api_token: str) -> dict:
+    return {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {api_token}",
+        "User-Agent": "otmega-admin-console/1.0",
+    }
+
+
+def _read_cloudflare_api(path: str, api_token: str, *, timeout: int = 8) -> tuple[dict, int, int]:
+    url = f"https://api.cloudflare.com/client/v4/{path.lstrip('/')}"
+    start = time.perf_counter()
+    probe_request = urllib.request.Request(url, headers=_cloudflare_headers(api_token), method="GET")
+    with urllib.request.urlopen(probe_request, timeout=timeout) as response:
+        payload = response.read().decode("utf-8")
+        decoded = json.loads(payload or "{}")
+        if not isinstance(decoded, dict):
+            decoded = {}
+        return decoded, response.status, _elapsed_ms(start)
+
+
+def _cloudflare_total(payload: dict, fallback_len: int = 0) -> int:
+    result_info = payload.get("result_info")
+    if isinstance(result_info, dict) and isinstance(result_info.get("total_count"), int):
+        return int(result_info["total_count"])
+    result = payload.get("result")
+    return len(result) if isinstance(result, list) else fallback_len
+
+
+def _cloudflare_result_list(payload: dict) -> list[dict]:
+    result = payload.get("result")
+    return [item for item in result if isinstance(item, dict)] if isinstance(result, list) else []
+
+
+def _host_present(records: list[dict], host: str) -> bool:
+    return any((record.get("name") or "").lower() == host.lower() for record in records)
+
+
+def _route_present(routes: list[dict], host: str) -> bool:
+    host = host.lower()
+    for route in routes:
+        pattern = (route.get("pattern") or "").lower()
+        if pattern == host or pattern.startswith(f"{host}/") or pattern.startswith(f"{host}/*"):
+            return True
+    return False
+
+
+def _cloudflare_api_error_summary(exc: urllib.error.HTTPError, label: str) -> str:
+    if exc.code in {401, 403}:
+        return f"{label} returned HTTP {exc.code}; Cloudflare token needs the matching read permission."
+    if exc.code == 404:
+        return f"{label} returned HTTP 404; Cloudflare account/zone identifiers should be checked."
+    return f"{label} returned HTTP {exc.code}."
+
+
+def _google_access_token(scopes: list[str]) -> str:
+    if os.environ.get("K_SERVICE"):
+        metadata_url = (
+            "http://metadata.google.internal/computeMetadata/v1/instance/"
+            "service-accounts/default/token"
+        )
+        request_headers = {"Metadata-Flavor": "Google"}
+        probe_request = urllib.request.Request(metadata_url, headers=request_headers, method="GET")
+        with urllib.request.urlopen(probe_request, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8") or "{}")
+            token = payload.get("access_token")
+            if token:
+                return token
+        raise RuntimeError("metadata_access_token_unavailable")
+
+    import google.auth
+    from google.auth.transport.requests import Request as GoogleAuthRequest
+
+    credentials, _ = google.auth.default(scopes=scopes)
+    credentials.refresh(GoogleAuthRequest())
+    return credentials.token
+
+
+def _google_api_headers(access_token: str) -> dict:
+    return {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": "otmega-admin-console/1.0",
+        "x-goog-user-project": PROJECT_ID,
+    }
+
+
+def _read_google_api(url: str, access_token: str, *, timeout: int = 8) -> tuple[dict, int, int]:
+    start = time.perf_counter()
+    probe_request = urllib.request.Request(url, headers=_google_api_headers(access_token), method="GET")
+    with urllib.request.urlopen(probe_request, timeout=timeout) as response:
+        payload = response.read().decode("utf-8")
+        decoded = json.loads(payload or "{}")
+        if not isinstance(decoded, dict):
+            decoded = {}
+        return decoded, response.status, _elapsed_ms(start)
+
+
+def _firebase_console_url(site_id: str | None = None) -> str:
+    if site_id:
+        return f"https://console.firebase.google.com/project/{PROJECT_ID}/hosting/sites/{site_id}"
+    return f"https://console.firebase.google.com/project/{PROJECT_ID}/hosting/sites"
+
+
+def _check_firebase_hosting() -> dict:
+    site_id = FIREBASE_HOSTING_SITE_ID
+    primary_url = FIREBASE_HOSTING_PRIMARY_URL
+    console_url = _firebase_console_url(site_id)
+    api_root = f"https://firebasehosting.googleapis.com/v1beta1/projects/{PROJECT_ID}/sites/{site_id}"
+    start = time.perf_counter()
+    public_status = "not checked"
+    release_status = "not checked"
+    release_type = "unknown"
+    release_time = "unknown"
+    version_id = "unknown"
+    file_count = "unknown"
+    version_bytes = "unknown"
+
+    try:
+        token = _google_access_token(["https://www.googleapis.com/auth/firebase.readonly"])
+    except Exception as exc:
+        return _resource(
+            resource_id="firebase-hosting",
+            group="Frontend",
+            name="Collabra Firebase Hosting",
+            kind="Firebase Hosting",
+            status="unknown",
+            summary=f"Firebase Hosting API credential is not available: {type(exc).__name__}.",
+            primary_url=primary_url,
+            console_url=console_url,
+            latency_ms=_elapsed_ms(start),
+            metrics=[
+                _metric("site", site_id),
+                _metric("integration", "not integrated", "unknown"),
+            ],
+        )
+
+    status = "unknown"
+    summary = "Firebase Hosting release probe was not checked."
+    api_latency = 0
+    try:
+        releases_payload, http_status, api_latency = _read_google_api(f"{api_root}/releases?pageSize=1", token)
+        releases = releases_payload.get("releases") if isinstance(releases_payload.get("releases"), list) else []
+        latest = releases[0] if releases else {}
+        version = latest.get("version") if isinstance(latest.get("version"), dict) else {}
+        release_status = str(http_status)
+        release_type = latest.get("type") or "unknown"
+        release_time = latest.get("releaseTime") or "unknown"
+        version_name = version.get("name") or ""
+        version_id = version_name.rsplit("/", 1)[-1] if version_name else "unknown"
+        version_status = version.get("status") or "unknown"
+        file_count = str(version.get("fileCount") or "unknown")
+        version_bytes = str(version.get("versionBytes") or "unknown")
+        if http_status == 200 and releases and version_status == "FINALIZED":
+            status = "ok"
+            summary = "Firebase Hosting latest release is reachable and finalized."
+        elif http_status == 200 and releases:
+            status = "warn"
+            summary = f"Firebase Hosting latest release is reachable with version status {version_status}."
+        else:
+            status = "warn"
+            summary = "Firebase Hosting API is reachable, but no release was returned."
+    except urllib.error.HTTPError as exc:
+        release_status = str(exc.code)
+        if exc.code in {401, 403}:
+            status = "warn"
+            summary = f"Firebase Hosting API returned HTTP {exc.code}; service account needs Firebase Hosting Viewer."
+        elif exc.code == 404:
+            status = "error"
+            summary = "Firebase Hosting site was not found; site id should be checked."
+        else:
+            status = "error"
+            summary = f"Firebase Hosting API returned HTTP {exc.code}."
+    except Exception as exc:
+        status = "error"
+        summary = f"Firebase Hosting API probe failed: {type(exc).__name__}."
+
+    public_latency = 0
+    try:
+        probe_request = urllib.request.Request(primary_url, headers={"User-Agent": "otmega-admin-console/1.0"}, method="GET")
+        public_start = time.perf_counter()
+        with urllib.request.urlopen(probe_request, timeout=6) as response:
+            public_latency = _elapsed_ms(public_start)
+            public_status = str(response.status)
+            if response.status >= 500 and status == "ok":
+                status = "warn"
+                summary = f"Firebase Hosting release is finalized, but public endpoint returned HTTP {response.status}."
+    except urllib.error.HTTPError as exc:
+        public_status = str(exc.code)
+        if exc.code >= 500 and status == "ok":
+            status = "warn"
+            summary = f"Firebase Hosting release is finalized, but public endpoint returned HTTP {exc.code}."
+    except Exception:
+        public_status = "failed"
+        if status == "ok":
+            status = "warn"
+            summary = "Firebase Hosting release is finalized, but public endpoint probe failed."
+
+    return _resource(
+        resource_id="firebase-hosting",
+        group="Frontend",
+        name="Collabra Firebase Hosting",
+        kind="Firebase Hosting",
+        status=status,
+        summary=summary,
+        primary_url=primary_url,
+        console_url=console_url,
+        latency_ms=api_latency + public_latency or _elapsed_ms(start),
+        metrics=[
+            _metric("site", site_id, "ok"),
+            _metric("release HTTP", release_status, "ok" if release_status == "200" else status),
+            _metric("public HTTP", public_status, "ok" if public_status.startswith("2") else status),
+            _metric("release type", release_type, "neutral"),
+            _metric("release time", release_time, "neutral"),
+            _metric("version", version_id, "neutral"),
+            _metric("files", file_count, "neutral"),
+            _metric("bytes", version_bytes, "neutral"),
+        ],
+        links=[
+            _link("Hosting releases", console_url),
+            _link("Firebase API", api_root),
+        ],
+    )
+
+
+def _check_cloudflare_workers() -> dict:
+    config = _cloudflare_config()
+    api_token = config["api_token"]
+    account_id = config["account_id"]
+    zone_id = config["zone_id"]
+    zone_name = config["zone_name"]
+    cloudflare_console = f"https://dash.cloudflare.com/{account_id}/{zone_name}" if account_id and zone_name else "https://dash.cloudflare.com"
+    expected_hosts = ["db.otmega.com", "files.otmega.com", "api.otmega.com"]
+    missing_config = [key for key in ("api_token", "account_id", "zone_id", "zone_name") if not config.get(key)]
+
+    if missing_config:
+        return _resource(
+            resource_id="cloudflare-workers",
+            group="Edge",
+            name="Cloudflare Workers",
+            kind="Workers / DNS",
+            status="unknown",
+            summary="Cloudflare API is not integrated with this console runtime yet.",
+            primary_url="https://dash.cloudflare.com",
+            console_url=cloudflare_console,
+            metrics=[
+                _metric("integration", "not integrated", "unknown"),
+                _metric("missing config", ", ".join(missing_config), "warn"),
+                *[_metric(host, "not checked", "unknown") for host in expected_hosts],
+            ],
+            links=[
+                _link("DB worker", "https://db.otmega.com"),
+                _link("Files worker", "https://files.otmega.com"),
+                _link("API domain", "https://api.otmega.com"),
+            ],
+        )
+
+    start = time.perf_counter()
+    probe_results: dict[str, dict] = {}
+    failures: list[str] = []
+    total_latency = 0
+    endpoints = [
+        ("scripts", f"accounts/{account_id}/workers/scripts"),
+        ("dns", f"zones/{zone_id}/dns_records?per_page=100"),
+        ("routes", f"zones/{zone_id}/workers/routes"),
+    ]
+
+    for label, path in endpoints:
+        try:
+            payload, http_status, latency_ms = _read_cloudflare_api(path, api_token)
+            total_latency += latency_ms
+            success = bool(payload.get("success")) and 200 <= http_status < 300
+            if not success:
+                failures.append(f"{label} returned success=false")
+            probe_results[label] = {
+                "payload": payload,
+                "http_status": http_status,
+                "success": success,
+            }
+        except urllib.error.HTTPError as exc:
+            total_latency += _elapsed_ms(start)
+            failures.append(_cloudflare_api_error_summary(exc, label))
+            probe_results[label] = {"payload": {}, "http_status": exc.code, "success": False}
+        except Exception as exc:
+            total_latency += _elapsed_ms(start)
+            failures.append(f"{label} probe failed: {type(exc).__name__}")
+            probe_results[label] = {"payload": {}, "http_status": "failed", "success": False}
+
+    scripts_payload = probe_results.get("scripts", {}).get("payload", {})
+    dns_payload = probe_results.get("dns", {}).get("payload", {})
+    routes_payload = probe_results.get("routes", {}).get("payload", {})
+    scripts = _cloudflare_result_list(scripts_payload)
+    dns_records = _cloudflare_result_list(dns_payload)
+    routes = _cloudflare_result_list(routes_payload)
+    scripts_count = _cloudflare_total(scripts_payload, len(scripts))
+    dns_count = _cloudflare_total(dns_payload, len(dns_records))
+    routes_count = _cloudflare_total(routes_payload, len(routes))
+    host_metrics = []
+    missing_hosts = []
+    for host in expected_hosts:
+        has_dns = _host_present(dns_records, host)
+        has_route = _route_present(routes, host)
+        if not has_dns and not has_route:
+            missing_hosts.append(host)
+        state = "ok" if has_dns or has_route else "warn"
+        host_metrics.append(_metric(host, f"dns:{'yes' if has_dns else 'no'} route:{'yes' if has_route else 'no'}", state))
+
+    if failures:
+        status = "warn" if any("permission" in item or "HTTP 401" in item or "HTTP 403" in item for item in failures) else "error"
+        summary = "; ".join(failures[:2])
+    elif missing_hosts:
+        status = "warn"
+        summary = f"Cloudflare API is reachable, but expected DNS/route entries need review: {', '.join(missing_hosts)}."
+    else:
+        status = "ok"
+        summary = "Cloudflare API read probes succeeded for Workers scripts, DNS records and Workers routes."
+
+    return _resource(
+        resource_id="cloudflare-workers",
+        group="Edge",
+        name="Cloudflare Workers",
+        kind="Workers / DNS",
+        status=status,
+        summary=summary,
+        primary_url="https://dash.cloudflare.com",
+        console_url=cloudflare_console,
+        latency_ms=total_latency or _elapsed_ms(start),
+        metrics=[
+            _metric("scripts", str(scripts_count), "ok" if probe_results.get("scripts", {}).get("success") else "warn"),
+            _metric("routes", str(routes_count), "ok" if probe_results.get("routes", {}).get("success") else "warn"),
+            _metric("dns records", str(dns_count), "ok" if probe_results.get("dns", {}).get("success") else "warn"),
+            _metric("zone", zone_name, "ok"),
+            *host_metrics,
+        ],
+        links=[
+            _link("DB worker", "https://db.otmega.com"),
+            _link("Files worker", "https://files.otmega.com"),
+            _link("API domain", "https://api.otmega.com"),
+            _link("Workers", f"{cloudflare_console}/workers-and-pages" if cloudflare_console else None),
+            _link("DNS", f"{cloudflare_console}/dns/records" if cloudflare_console else None),
+        ],
+    )
 
 
 def _supabase_project_id(url: str) -> str:
@@ -668,8 +1022,6 @@ def _static_resources(base_url: str) -> list[dict]:
         "https://console.cloud.google.com/run/detail/"
         f"{REGION}/otmega-console/metrics?project={PROJECT_ID}"
     )
-    firebase_console = f"https://console.firebase.google.com/project/{PROJECT_ID}/hosting/sites"
-    cloudflare_console = "https://dash.cloudflare.com"
     return [
         _resource(
             resource_id="cloud-run-console",
@@ -684,37 +1036,6 @@ def _static_resources(base_url: str) -> list[dict]:
                 _metric("service", os.environ.get("K_SERVICE", "otmega-console")),
                 _metric("region", REGION),
                 _metric("project", PROJECT_ID),
-            ],
-        ),
-        _resource(
-            resource_id="firebase-hosting",
-            group="Frontend",
-            name="Collabra Firebase Hosting",
-            kind="Firebase Hosting",
-            status="unknown",
-            summary="Hosting is documented for the main Collabra web frontend; admin API token is not attached to this console yet.",
-            primary_url="https://app.otmega.com",
-            console_url=firebase_console,
-            metrics=[_metric("deployment", "external to console", "neutral")],
-        ),
-        _resource(
-            resource_id="cloudflare-workers",
-            group="Edge",
-            name="Cloudflare Workers",
-            kind="Workers / DNS",
-            status="unknown",
-            summary="Workers are documented for db, files and notification paths; Cloudflare API token is not attached yet.",
-            primary_url="https://dash.cloudflare.com",
-            console_url=cloudflare_console,
-            metrics=[
-                _metric("db worker", "db.otmega.com"),
-                _metric("file worker", "files.otmega.com"),
-                _metric("api domain", "api.otmega.com"),
-            ],
-            links=[
-                _link("DB worker", "https://db.otmega.com"),
-                _link("Files worker", "https://files.otmega.com"),
-                _link("API domain", "https://api.otmega.com"),
             ],
         ),
     ]
@@ -747,6 +1068,26 @@ def operational_resources():
                 metrics=[_metric("bucket", os.environ.get("APP_DATA_BUCKET_NAME", "otmega-collabra-secure"))],
             ),
             *_static_resources(base_url),
+            _resource(
+                resource_id="firebase-hosting",
+                group="Frontend",
+                name="Collabra Firebase Hosting",
+                kind="Firebase Hosting",
+                status="unknown",
+                summary="Live probe is skipped during automated tests.",
+                primary_url=FIREBASE_HOSTING_PRIMARY_URL,
+                metrics=[_metric("probe", "skipped", "unknown")],
+            ),
+            _resource(
+                resource_id="cloudflare-workers",
+                group="Edge",
+                name="Cloudflare Workers",
+                kind="Workers / DNS",
+                status="unknown",
+                summary="Live probe is skipped during automated tests.",
+                primary_url="https://dash.cloudflare.com",
+                metrics=[_metric("probe", "skipped", "unknown")],
+            ),
         ]
         return jsonify(
             {
@@ -769,6 +1110,8 @@ def operational_resources():
         _check_files_proxy(),
         _check_collabra_api(),
         *_static_resources(base_url),
+        _check_firebase_hosting(),
+        _check_cloudflare_workers(),
     ]
     return jsonify(
         {

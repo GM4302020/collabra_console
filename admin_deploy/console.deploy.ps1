@@ -22,6 +22,10 @@ $RequiredSecrets = @(
     "GEMINI_API_KEY_25",
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_ZONE_ID",
+    "CLOUDFLARE_ZONE_NAME",
     "gcs-signer-key"
 )
 
@@ -165,7 +169,7 @@ Invoke-CheckedStep "Deploy production Admin Console to Cloud Run" {
   --project $ProjectId `
   --platform managed `
   --allow-unauthenticated `
-  --set-env-vars="CONSOLE_MODE=read_only,CONSOLE_ADVISOR_ID=20018,APP_DATA_BUCKET_NAME=otmega-collabra-secure,GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcs-signer-key,MAIN_BACKEND_URL=https://otmega-4utq3wq6ka-uc.a.run.app" `
+  --set-env-vars="CONSOLE_MODE=read_only,CONSOLE_ADVISOR_ID=20018,APP_DATA_BUCKET_NAME=otmega-collabra-secure,GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcs-signer-key,MAIN_BACKEND_URL=https://otmega-4utq3wq6ka-uc.a.run.app,FIREBASE_HOSTING_SITE_ID=ot-ai-advisor,FIREBASE_HOSTING_PRIMARY_URL=https://app.otmega.com" `
   --set-secrets="FLASK_SECRET_KEY=FLASK_SECRET_KEY:latest" `
   --set-secrets="FALLBACK_ADMIN_USER=FALLBACK_ADMIN_USER:latest" `
   --set-secrets="FALLBACK_ADMIN_PASS=FALLBACK_ADMIN_PASS:latest" `
@@ -174,6 +178,10 @@ Invoke-CheckedStep "Deploy production Admin Console to Cloud Run" {
   --set-secrets="GEMINI_API_KEY_25=GEMINI_API_KEY_25:latest" `
   --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest" `
   --set-secrets="OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest" `
+  --set-secrets="CLOUDFLARE_API_TOKEN=CLOUDFLARE_API_TOKEN:latest" `
+  --set-secrets="CLOUDFLARE_ACCOUNT_ID=CLOUDFLARE_ACCOUNT_ID:latest" `
+  --set-secrets="CLOUDFLARE_ZONE_ID=CLOUDFLARE_ZONE_ID:latest" `
+  --set-secrets="CLOUDFLARE_ZONE_NAME=CLOUDFLARE_ZONE_NAME:latest" `
   --set-secrets="/secrets/gcs-signer-key=gcs-signer-key:latest"
     } finally {
         Pop-Location
