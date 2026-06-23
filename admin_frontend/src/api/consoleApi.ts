@@ -49,6 +49,17 @@ export type ConfigDomainsResponse = {
   domains: ConfigDomain[];
 };
 
+export type ConsoleDashboardSettings = Record<string, unknown>;
+
+export type ConsoleDashboardSettingsResponse = {
+  status: string;
+  bucket: string;
+  path: string;
+  actor_key: string;
+  settings: ConsoleDashboardSettings;
+  updated_at: string | null;
+};
+
 export type OperationalMetric = {
   label: string;
   value: string;
@@ -81,6 +92,195 @@ export type OperationalResourcesResponse = {
   write_enabled: boolean;
   timestamp: string;
   resources: OperationalResource[];
+};
+
+export type FirebaseHostingRelease = {
+  name: string;
+  type: string;
+  release_time: string | null;
+  release_user_email: string | null;
+  version: string;
+  version_status: string;
+  file_count: string;
+  version_bytes: string;
+  create_time: string | null;
+  finalize_time: string | null;
+  deployment_tool: string | null;
+};
+
+export type FirebaseHostingReleasesResponse = {
+  status: string;
+  mode: string;
+  write_enabled: boolean;
+  project_id: string;
+  site_id: string;
+  primary_url: string;
+  console_url: string;
+  http_status: number;
+  latency_ms: number;
+  timestamp: string;
+  releases: FirebaseHostingRelease[];
+};
+
+export type CloudRunLogEntry = {
+  timestamp: string | null;
+  receive_timestamp: string | null;
+  severity: string;
+  message: string;
+  log_name: string;
+  insert_id: string;
+  revision: string;
+  service: string;
+  location: string;
+  http_method: string | null;
+  request_url: string | null;
+  status: number | null;
+  latency: string | null;
+  event?: string;
+  build_status?: string;
+  artifact_digest?: string | null;
+};
+
+export type CloudRunLogsResponse = {
+  status: string;
+  mode: string;
+  write_enabled: boolean;
+  source: string;
+  project_id: string;
+  region: string;
+  service: string;
+  hours: number;
+  severity: string;
+  limit: number;
+  http_status?: number;
+  latency_ms?: number;
+  message?: string;
+  timestamp: string;
+  entries: CloudRunLogEntry[];
+};
+
+export type OperationalLogSource = 'cloud-run-console' | 'cloud-build';
+
+export type UserOpsBannerTarget = {
+  user_id: string;
+  email: string | null;
+  full_name: string | null;
+  online_status: string | null;
+  avatar_path?: string | null;
+  avatar_url?: string | null;
+  country_code?: string | null;
+  role?: string | null;
+  source?: string;
+  state?: string;
+  has_chat?: boolean;
+  shown?: boolean;
+  repairable?: boolean;
+  repair_block_reason?: string | null;
+};
+
+export type UserOpsRow = {
+  user_id: string;
+  advisor_id: number;
+  email: string | null;
+  full_name: string | null;
+  role: string;
+  access_level: string;
+  tier: number;
+  balance: string;
+  country_code: string | null;
+  avatar_path: string | null;
+  avatar_url: string | null;
+  online_status: string;
+  last_typed_lang: string | null;
+  joined_at: string | null;
+  status: string;
+  visibility: {
+    profile_visibility: string | null;
+    updated_at: string | null;
+    visibility_changed_at: string | null;
+    active_banner_count: number;
+    stored_active_relation_count?: number;
+    visible_banner_count?: number;
+    chat_banner_count?: number;
+    required_banner_count?: number;
+    upstream_system_banner_count?: number;
+    invitation_banner_count?: number;
+    warmable_chat_count?: number;
+    excluded_banner_count?: number;
+    pending_banner_count: number;
+    removed_banner_count: number;
+    hidden_viewer_count: number;
+    active_targets: UserOpsBannerTarget[];
+    visible_now_targets?: UserOpsBannerTarget[];
+    warmable_chat_targets?: UserOpsBannerTarget[];
+    excluded_targets?: UserOpsBannerTarget[];
+  };
+  notifications: {
+    system_notification_tokens: number;
+    internal_notification_markers: number;
+    device_entries: number;
+  };
+  usage: {
+    messages_sent: number;
+    last_message_at: string | null;
+    last_message_latency_seconds: number | null;
+    conversations: {
+      total: number;
+      active_with_chat: number;
+      active_without_chat: number;
+      unread_total: number;
+      banner_list_with_chat?: number;
+      upstream_system_with_chat?: number;
+    };
+    notifications: {
+      system_push_total: number;
+      internal_total: number;
+    };
+  };
+};
+
+export type UserOpsResponse = {
+  status: string;
+  mode: string;
+  write_enabled: boolean;
+  timestamp: string;
+  page: number;
+  page_size: number;
+  total: number;
+  sort: string;
+  direction: string;
+  filters: Record<string, string>;
+  rows: UserOpsRow[];
+};
+
+export type UserOpsAvatarUrlResponse = {
+  status: string;
+  avatar_path: string;
+  avatar_url: string | null;
+};
+
+export type UserOpsRepairResponse = {
+  status: string;
+  mode: string;
+  write_enabled: boolean;
+  audit: {
+    event: string;
+    actor_email: string | null;
+    actor_user_id: string | null;
+    owner_user_id: string;
+    counterpart_user_id: string;
+    reason: string;
+    timestamp: string;
+  };
+  repair: {
+    owner_user_id: string;
+    counterpart_user_id: string;
+    before_active_count: number;
+    after_active_count: number;
+    removed_marker_cleared: boolean;
+    visibility_changed_at: string;
+    target: UserOpsBannerTarget;
+  };
 };
 
 export type UiTextsMatrixRow = {
@@ -191,7 +391,8 @@ async function getJson<T>(path: string): Promise<T> {
     },
   });
   if (!response.ok) {
-    throw new Error(`${path} failed with ${response.status}`);
+    const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(payload?.message || `${path} failed with ${response.status}`);
   }
   return response.json() as Promise<T>;
 }
@@ -233,8 +434,74 @@ export function fetchConfigDomains(): Promise<ConfigDomainsResponse> {
   return getJson<ConfigDomainsResponse>('/api/console/config/domains');
 }
 
+export function fetchConsoleDashboardSettings(): Promise<ConsoleDashboardSettingsResponse> {
+  return getJson<ConsoleDashboardSettingsResponse>('/api/console/dashboard-settings');
+}
+
+export function saveConsoleDashboardSettingsSection(section: string, value: Record<string, unknown>): Promise<ConsoleDashboardSettingsResponse> {
+  return postJson<ConsoleDashboardSettingsResponse>('/api/console/dashboard-settings', { section, value });
+}
+
 export function fetchOperationalResources(): Promise<OperationalResourcesResponse> {
   return getJson<OperationalResourcesResponse>('/api/console/operations/resources');
+}
+
+export function fetchFirebaseHostingReleases(limit = 10): Promise<FirebaseHostingReleasesResponse> {
+  return getJson<FirebaseHostingReleasesResponse>(`/api/console/operations/firebase-hosting/releases?limit=${limit}`);
+}
+
+export function fetchOperationalLogs(params: { source: OperationalLogSource; hours: number; severity: string; limit: number }): Promise<CloudRunLogsResponse> {
+  const query = new URLSearchParams({
+    hours: String(params.hours),
+    limit: String(params.limit),
+    severity: params.severity,
+    source: params.source,
+  });
+  return getJson<CloudRunLogsResponse>(`/api/console/operations/logs?${query.toString()}`);
+}
+
+export function fetchCloudRunLogs(params: { hours: number; severity: string; limit: number }): Promise<CloudRunLogsResponse> {
+  return fetchOperationalLogs({ ...params, source: 'cloud-run-console' });
+}
+
+export function fetchUserOperations(params: {
+  page: number;
+  page_size: number;
+  sort: string;
+  direction: string;
+  search: string;
+  role: string;
+  status: string;
+  online_status: string;
+}): Promise<UserOpsResponse> {
+  const query = new URLSearchParams({
+    page: String(params.page),
+    page_size: String(params.page_size),
+    sort: params.sort,
+    direction: params.direction,
+    search: params.search,
+    role: params.role,
+    status: params.status,
+    online_status: params.online_status,
+  });
+  return getJson<UserOpsResponse>(`/api/console/users/operations?${query.toString()}`);
+}
+
+export function getUserOpsAvatarUrl(avatarPath: string): Promise<UserOpsAvatarUrlResponse> {
+  return postJson<UserOpsAvatarUrlResponse>('/api/console/users/avatar-url', { avatar_path: avatarPath });
+}
+
+export function repairUserOpsActiveBanner(params: {
+  owner_user_id: string;
+  counterpart_user_id: string;
+  reason?: string;
+}): Promise<UserOpsRepairResponse> {
+  return postJson<UserOpsRepairResponse>('/api/console/users/repair-active-banner', {
+    owner_user_id: params.owner_user_id,
+    counterpart_user_id: params.counterpart_user_id,
+    confirmation: 'REPAIR',
+    reason: params.reason || 'user_operations_banner_popup_repair',
+  });
 }
 
 export function fetchUiTextsMatrix(): Promise<UiTextsMatrixResponse> {

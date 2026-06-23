@@ -53,6 +53,7 @@ def test_login_returns_user_zero_profile(monkeypatch):
     assert payload["actor"]["access_level"] == "User Zero"
     assert payload["actor"]["tier"] == 7
     assert "console.view_trace_summary" in payload["capabilities"]
+    assert "console.repair_user_operations" in payload["capabilities"]
 
 
 def test_runtime_inventory_requires_capability():

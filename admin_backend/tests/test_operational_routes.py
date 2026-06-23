@@ -3,6 +3,7 @@
 
 import json
 
+from app import create_app
 from admin_api import operational_routes
 
 
@@ -135,3 +136,196 @@ def test_firebase_hosting_probe_reports_finalized_release(monkeypatch):
     assert metric_values["public HTTP"] == "200"
     assert metric_values["release type"] == "DEPLOY"
     assert metric_values["version"] == "version-1"
+
+
+def test_firebase_hosting_releases_endpoint_is_read_only(monkeypatch):
+    monkeypatch.setenv("FALLBACK_ADMIN_USER", "root@example.com")
+    monkeypatch.setenv("FALLBACK_ADMIN_PASS", "correct-pass")
+
+    def fake_read_releases(page_size):
+        assert page_size == 7
+        return (
+            [
+                {
+                    "name": "projects/ot-ai-advisor/sites/ot-ai-advisor/releases/123",
+                    "type": "DEPLOY",
+                    "release_time": "2026-06-21T10:30:00Z",
+                    "release_user_email": "root@example.com",
+                    "version": "version-123",
+                    "version_status": "FINALIZED",
+                    "file_count": "12",
+                    "version_bytes": "4096",
+                    "create_time": "2026-06-21T10:29:00Z",
+                    "finalize_time": "2026-06-21T10:29:40Z",
+                    "deployment_tool": "firebase-cli",
+                }
+            ],
+            200,
+            31,
+        )
+
+    monkeypatch.setattr(operational_routes, "_read_firebase_hosting_releases", fake_read_releases)
+
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    client.post("/api/console/login", json={"email": "root@example.com", "password": "correct-pass"})
+    response = client.get("/api/console/operations/firebase-hosting/releases?limit=7")
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["mode"] == "read_only"
+    assert payload["write_enabled"] is False
+    assert payload["http_status"] == 200
+    assert payload["latency_ms"] == 31
+    assert payload["releases"][0]["version"] == "version-123"
+    assert payload["releases"][0]["version_status"] == "FINALIZED"
+
+
+def test_cloud_run_logs_endpoint_is_read_only(monkeypatch):
+    monkeypatch.setenv("FALLBACK_ADMIN_USER", "root@example.com")
+    monkeypatch.setenv("FALLBACK_ADMIN_PASS", "correct-pass")
+
+    def fake_read_logs(*, hours, severity, limit):
+        assert hours == 6
+        assert severity == "WARNING"
+        assert limit == 25
+        return (
+            [
+                {
+                    "timestamp": "2026-06-21T12:00:00Z",
+                    "receive_timestamp": "2026-06-21T12:00:01Z",
+                    "severity": "WARNING",
+                    "message": "sample warning",
+                    "log_name": "projects/ot-ai-advisor/logs/run.googleapis.com%2Frequests",
+                    "insert_id": "abc123",
+                    "revision": "otmega-console-00080-test",
+                    "service": "otmega-console",
+                    "location": "us-central1",
+                    "http_method": "GET",
+                    "request_url": "https://otmega-console.example/health",
+                    "status": 200,
+                    "latency": "0.123s",
+                }
+            ],
+            200,
+            44,
+        )
+
+    monkeypatch.setattr(operational_routes, "_read_cloud_run_logs", fake_read_logs)
+
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    client.post("/api/console/login", json={"email": "root@example.com", "password": "correct-pass"})
+    response = client.get("/api/console/operations/logs/cloud-run?hours=6&severity=WARNING&limit=25")
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["mode"] == "read_only"
+    assert payload["write_enabled"] is False
+    assert payload["source"] == "cloud-run-console"
+    assert payload["http_status"] == 200
+    assert payload["entries"][0]["message"] == "sample warning"
+
+
+def test_cloud_build_logs_source_is_read_only(monkeypatch):
+    monkeypatch.setenv("FALLBACK_ADMIN_USER", "root@example.com")
+    monkeypatch.setenv("FALLBACK_ADMIN_PASS", "correct-pass")
+
+    def fake_read_logs(*, hours, severity, limit):
+        assert hours == 24
+        assert severity == "ERROR"
+        assert limit == 50
+        return (
+            [
+                {
+                    "timestamp": "2026-06-21T13:00:00Z",
+                    "receive_timestamp": "2026-06-21T13:00:01Z",
+                    "severity": "ERROR",
+                    "message": "build step failed",
+                    "log_name": "projects/ot-ai-advisor/logs/cloudbuild",
+                    "insert_id": "build-log-1",
+                    "revision": "build-123",
+                    "service": "cloud-build",
+                    "location": "us-central1",
+                    "http_method": None,
+                    "request_url": None,
+                    "status": None,
+                    "latency": None,
+                }
+            ],
+            200,
+            58,
+        )
+
+    monkeypatch.setattr(operational_routes, "_read_cloud_build_logs", fake_read_logs)
+
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    client.post("/api/console/login", json={"email": "root@example.com", "password": "correct-pass"})
+    response = client.get("/api/console/operations/logs?source=cloud-build&hours=24&severity=ERROR&limit=50")
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["mode"] == "read_only"
+    assert payload["write_enabled"] is False
+    assert payload["source"] == "cloud-build"
+    assert payload["service"] == "cloud-build"
+    assert payload["entries"][0]["revision"] == "build-123"
+
+
+def test_cloud_build_log_item_extracts_deploy_summary():
+    create_item = operational_routes._cloud_build_log_item(
+        {
+            "timestamp": "2026-06-21T14:00:00Z",
+            "severity": "NOTICE",
+            "protoPayload": {
+                "methodName": "google.devtools.cloudbuild.v1.CloudBuild.CreateBuild",
+                "serviceName": "cloudbuild.googleapis.com",
+                "status": {},
+            },
+            "resource": {"labels": {"build_id": "build-1", "build_region": "us-central1"}},
+        }
+    )
+    done_item = operational_routes._cloud_build_log_item(
+        {
+            "timestamp": "2026-06-21T14:01:00Z",
+            "severity": "INFO",
+            "textPayload": "DONE",
+            "resource": {"labels": {"build_id": "build-1"}},
+        }
+    )
+    digest_item = operational_routes._cloud_build_log_item(
+        {
+            "timestamp": "2026-06-21T14:02:00Z",
+            "severity": "INFO",
+            "textPayload": "latest: digest: sha256:bedfcdbee54323e55bb2978fa63809a557e3349",
+            "resource": {"labels": {"build_id": "build-1"}},
+        }
+    )
+
+    assert create_item["event"] == "create_build"
+    assert done_item["event"] == "done"
+    assert done_item["build_status"] == "done"
+    assert digest_item["event"] == "artifact_digest"
+    assert digest_item["build_status"] == "pushed"
+    assert digest_item["artifact_digest"] == "sha256:bedfcdbee54323e55bb2978fa63809a557e3349"
+
+
+def test_cloud_run_log_payload_redacts_sensitive_lines():
+    item = operational_routes._cloud_run_log_item(
+        {
+            "timestamp": "2026-06-21T12:00:00Z",
+            "severity": "ERROR",
+            "textPayload": "before\nAuthorization: Bearer secret-token\nafter",
+            "resource": {"labels": {"revision_name": "rev-1", "service_name": "otmega-console", "location": "us-central1"}},
+        }
+    )
+
+    assert "secret-token" not in item["message"]
+    assert "[redacted sensitive log line]" in item["message"]

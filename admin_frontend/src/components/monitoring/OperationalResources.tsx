@@ -8,10 +8,12 @@ import {
   ExternalLink,
   Globe2,
   HardDrive,
+  Info,
   RefreshCw,
   Server,
   ShieldCheck,
   TriangleAlert,
+  X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { fetchOperationalResources, type OperationalResource } from '../../api/consoleApi';
@@ -50,6 +52,7 @@ export default function OperationalResources({ enabled }: OperationalResourcesPr
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
 
   async function refreshResources() {
     if (!enabled) {
@@ -83,6 +86,16 @@ export default function OperationalResources({ enabled }: OperationalResourcesPr
       { error: 0, ok: 0, unknown: 0, warn: 0 },
     );
   }, [resources]);
+
+  const selectedResource = useMemo(() => {
+    return resources.find((resource) => resource.id === selectedResourceId) || null;
+  }, [resources, selectedResourceId]);
+
+  useEffect(() => {
+    if (selectedResourceId && !selectedResource) {
+      setSelectedResourceId(null);
+    }
+  }, [selectedResource, selectedResourceId]);
 
   if (!enabled) {
     return (
@@ -159,10 +172,97 @@ export default function OperationalResources({ enabled }: OperationalResourcesPr
                   </a>
                 ))}
               </div>
+              <button
+                className="console-resource-details-button"
+                onClick={() => setSelectedResourceId(resource.id)}
+                type="button"
+              >
+                <Info aria-hidden="true" size={15} />
+                <span>Details</span>
+              </button>
             </article>
           );
         })}
       </div>
+
+      {selectedResource ? (
+        <article className={`console-resource-detail status-${selectedResource.status}`}>
+          <div className="console-resource-detail-head">
+            <div>
+              <span className="console-label">Resource Detail</span>
+              <h4>{selectedResource.name}</h4>
+              <p>{selectedResource.kind}</p>
+            </div>
+            <button
+              aria-label="Close resource detail"
+              className="console-icon-button"
+              onClick={() => setSelectedResourceId(null)}
+              type="button"
+            >
+              <X aria-hidden="true" size={17} />
+            </button>
+          </div>
+
+          <div className="console-resource-detail-grid">
+            <div className="console-resource-detail-summary">
+              <span className={`console-resource-status status-${selectedResource.status}`}>
+                {statusLabel(selectedResource.status)}
+              </span>
+              <p>{selectedResource.summary}</p>
+              <dl>
+                <div>
+                  <dt>Resource ID</dt>
+                  <dd>{selectedResource.id}</dd>
+                </div>
+                <div>
+                  <dt>Group</dt>
+                  <dd>{selectedResource.group}</dd>
+                </div>
+                <div>
+                  <dt>Checked at</dt>
+                  <dd>{new Date(selectedResource.checked_at).toLocaleString()}</dd>
+                </div>
+                <div>
+                  <dt>Latency</dt>
+                  <dd>{selectedResource.latency_ms === null ? 'not reported' : `${selectedResource.latency_ms} ms`}</dd>
+                </div>
+                <div>
+                  <dt>Primary URL</dt>
+                  <dd>{selectedResource.primary_url || 'not reported'}</dd>
+                </div>
+                <div>
+                  <dt>Console URL</dt>
+                  <dd>{selectedResource.console_url || 'not reported'}</dd>
+                </div>
+              </dl>
+            </div>
+
+            <div className="console-resource-detail-metrics">
+              <span className="console-label">Metrics</span>
+              <div>
+                {selectedResource.metrics.map((metric) => (
+                  <span className={`metric-${metric.state}`} key={`${selectedResource.id}-detail-${metric.label}`}>
+                    <b>{metric.value}</b>
+                    <small>{metric.label}</small>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="console-resource-detail-links">
+              <span className="console-label">Links</span>
+              <div>
+                {selectedResource.links.map((link) => (
+                  <a href={link.url} key={`${selectedResource.id}-detail-${link.label}`} rel="noreferrer" target="_blank">
+                    <ExternalLink aria-hidden="true" size={14} />
+                    <span>{link.label}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          </div>
+        </article>
+      ) : null}
     </section>
   );
 }

@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -21,6 +22,8 @@ REGION = os.environ.get("CONSOLE_CLOUD_RUN_REGION") or os.environ.get("GOOGLE_CL
 ADVISOR_ID = os.environ.get("CONSOLE_ADVISOR_ID", "20018")
 FIREBASE_HOSTING_SITE_ID = os.environ.get("FIREBASE_HOSTING_SITE_ID") or "ot-ai-advisor"
 FIREBASE_HOSTING_PRIMARY_URL = os.environ.get("FIREBASE_HOSTING_PRIMARY_URL") or "https://app.otmega.com"
+CONSOLE_CLOUD_RUN_SERVICE = os.environ.get("CONSOLE_CLOUD_RUN_SERVICE") or "otmega-console"
+DIGEST_PATTERN = re.compile(r"(sha256:[0-9a-f]{16,64})", re.IGNORECASE)
 
 
 def _now_iso() -> str:
@@ -182,6 +185,19 @@ def _read_google_api(url: str, access_token: str, *, timeout: int = 8) -> tuple[
         return decoded, response.status, _elapsed_ms(start)
 
 
+def _post_google_api(url: str, access_token: str, body: dict, *, timeout: int = 8) -> tuple[dict, int, int]:
+    start = time.perf_counter()
+    payload = json.dumps(body).encode("utf-8")
+    headers = {**_google_api_headers(access_token), "Content-Type": "application/json"}
+    probe_request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    with urllib.request.urlopen(probe_request, timeout=timeout) as response:
+        decoded_payload = response.read().decode("utf-8")
+        decoded = json.loads(decoded_payload or "{}")
+        if not isinstance(decoded, dict):
+            decoded = {}
+        return decoded, response.status, _elapsed_ms(start)
+
+
 def _firebase_console_url(site_id: str | None = None) -> str:
     if site_id:
         return f"https://console.firebase.google.com/project/{PROJECT_ID}/hosting/sites/{site_id}"
@@ -307,6 +323,202 @@ def _check_firebase_hosting() -> dict:
             _link("Firebase API", api_root),
         ],
     )
+
+
+def _firebase_release_item(release: dict) -> dict:
+    version = release.get("version") if isinstance(release.get("version"), dict) else {}
+    version_name = version.get("name") or ""
+    return {
+        "name": release.get("name") or "",
+        "type": release.get("type") or "unknown",
+        "release_time": release.get("releaseTime") or None,
+        "release_user_email": (release.get("releaseUser") or {}).get("email") if isinstance(release.get("releaseUser"), dict) else None,
+        "version": version_name.rsplit("/", 1)[-1] if version_name else "unknown",
+        "version_status": version.get("status") or "unknown",
+        "file_count": str(version.get("fileCount") or "unknown"),
+        "version_bytes": str(version.get("versionBytes") or "unknown"),
+        "create_time": version.get("createTime") or None,
+        "finalize_time": version.get("finalizeTime") or None,
+        "deployment_tool": (version.get("labels") or {}).get("deployment-tool") if isinstance(version.get("labels"), dict) else None,
+    }
+
+
+def _read_firebase_hosting_releases(page_size: int = 10) -> tuple[list[dict], int, int]:
+    bounded_page_size = max(1, min(page_size, 25))
+    token = _google_access_token(["https://www.googleapis.com/auth/firebase.readonly"])
+    api_url = (
+        "https://firebasehosting.googleapis.com/v1beta1/"
+        f"projects/{PROJECT_ID}/sites/{FIREBASE_HOSTING_SITE_ID}/releases?pageSize={bounded_page_size}"
+    )
+    payload, http_status, latency_ms = _read_google_api(api_url, token)
+    raw_releases = payload.get("releases") if isinstance(payload.get("releases"), list) else []
+    return [_firebase_release_item(release) for release in raw_releases if isinstance(release, dict)], http_status, latency_ms
+
+
+def _bounded_int(value: str | None, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value or str(default))
+    except ValueError:
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def _redact_log_text(value: str) -> str:
+    redacted = value
+    sensitive_markers = ["authorization", "bearer ", "cookie", "set-cookie", "token", "secret", "api_key", "apikey", "password"]
+    for marker in sensitive_markers:
+        lower = redacted.lower()
+        index = lower.find(marker)
+        while index >= 0:
+            line_start = redacted.rfind("\n", 0, index) + 1
+            line_end = redacted.find("\n", index)
+            if line_end == -1:
+                line_end = len(redacted)
+            redacted = f"{redacted[:line_start]}[redacted sensitive log line]{redacted[line_end:]}"
+            lower = redacted.lower()
+            index = lower.find(marker, line_start + 29)
+    return redacted[:1200]
+
+
+def _stringify_log_payload(entry: dict) -> str:
+    if isinstance(entry.get("textPayload"), str):
+        return _redact_log_text(entry["textPayload"])
+    if isinstance(entry.get("jsonPayload"), dict):
+        safe_payload = {}
+        for key, value in entry["jsonPayload"].items():
+            if any(marker in str(key).lower() for marker in ("authorization", "cookie", "token", "secret", "password", "api_key", "apikey")):
+                safe_payload[key] = "[redacted]"
+            else:
+                safe_payload[key] = value
+        return _redact_log_text(json.dumps(safe_payload, ensure_ascii=False, sort_keys=True)[:1200])
+    if isinstance(entry.get("protoPayload"), dict):
+        proto = entry["protoPayload"]
+        method = proto.get("methodName") or "unknown_method"
+        service = proto.get("serviceName") or "unknown_service"
+        status = proto.get("status") if isinstance(proto.get("status"), dict) else {}
+        return _redact_log_text(json.dumps({"service": service, "method": method, "status": status}, ensure_ascii=False, sort_keys=True))
+    return ""
+
+
+def _cloud_run_log_item(entry: dict) -> dict:
+    resource_labels = (entry.get("resource") or {}).get("labels")
+    labels = resource_labels if isinstance(resource_labels, dict) else {}
+    http_request = entry.get("httpRequest") if isinstance(entry.get("httpRequest"), dict) else {}
+    return {
+        "timestamp": entry.get("timestamp") or entry.get("receiveTimestamp") or None,
+        "receive_timestamp": entry.get("receiveTimestamp") or None,
+        "severity": entry.get("severity") or "DEFAULT",
+        "message": _stringify_log_payload(entry),
+        "log_name": entry.get("logName") or "",
+        "insert_id": entry.get("insertId") or "",
+        "revision": labels.get("revision_name") or "unknown",
+        "service": labels.get("service_name") or CONSOLE_CLOUD_RUN_SERVICE,
+        "location": labels.get("location") or REGION,
+        "http_method": http_request.get("requestMethod") or None,
+        "request_url": http_request.get("requestUrl") or None,
+        "status": http_request.get("status") or None,
+        "latency": http_request.get("latency") or None,
+    }
+
+
+def _cloud_build_log_item(entry: dict) -> dict:
+    resource_labels = (entry.get("resource") or {}).get("labels")
+    labels = resource_labels if isinstance(resource_labels, dict) else {}
+    message = _stringify_log_payload(entry)
+    upper_message = message.strip().upper()
+    digest_match = DIGEST_PATTERN.search(message)
+    event = "log"
+    build_status = "unknown"
+    artifact_digest = digest_match.group(1) if digest_match else None
+    if "CLOUDBUILD.CREATEBUILD" in upper_message or "CLOUDBUILD.CREATEBUILD" in upper_message.replace(" ", ""):
+        event = "create_build"
+    elif upper_message == "DONE" or upper_message.endswith("\nDONE"):
+        event = "done"
+        build_status = "done"
+    elif digest_match:
+        event = "artifact_digest"
+        build_status = "pushed"
+    elif "ERROR" in upper_message or "FAIL" in upper_message:
+        event = "failure"
+        build_status = "failed"
+    return {
+        "timestamp": entry.get("timestamp") or entry.get("receiveTimestamp") or None,
+        "receive_timestamp": entry.get("receiveTimestamp") or None,
+        "severity": entry.get("severity") or "DEFAULT",
+        "message": message,
+        "log_name": entry.get("logName") or "",
+        "insert_id": entry.get("insertId") or "",
+        "revision": labels.get("build_id") or labels.get("build_trigger_id") or "unknown",
+        "service": "cloud-build",
+        "location": labels.get("build_region") or labels.get("location") or REGION,
+        "http_method": None,
+        "request_url": None,
+        "status": None,
+        "latency": None,
+        "event": event,
+        "build_status": build_status,
+        "artifact_digest": artifact_digest,
+    }
+
+
+def _read_cloud_run_logs(*, hours: int = 1, severity: str = "DEFAULT", limit: int = 50) -> tuple[list[dict], int, int]:
+    bounded_hours = max(1, min(hours, 24))
+    bounded_limit = max(1, min(limit, 100))
+    allowed_severities = {"DEFAULT", "DEBUG", "INFO", "NOTICE", "WARNING", "ERROR", "CRITICAL", "ALERT", "EMERGENCY"}
+    severity_filter = severity.upper() if severity.upper() in allowed_severities else "DEFAULT"
+    since = datetime.now(timezone.utc) - timedelta(hours=bounded_hours)
+    filter_parts = [
+        'resource.type="cloud_run_revision"',
+        f'resource.labels.service_name="{CONSOLE_CLOUD_RUN_SERVICE}"',
+        f'resource.labels.location="{REGION}"',
+        f'timestamp>="{since.isoformat().replace("+00:00", "Z")}"',
+    ]
+    if severity_filter != "DEFAULT":
+        filter_parts.append(f"severity>={severity_filter}")
+
+    token = _google_access_token(["https://www.googleapis.com/auth/logging.read"])
+    payload, http_status, latency_ms = _post_google_api(
+        "https://logging.googleapis.com/v2/entries:list",
+        token,
+        {
+            "resourceNames": [f"projects/{PROJECT_ID}"],
+            "filter": " AND ".join(filter_parts),
+            "orderBy": "timestamp desc",
+            "pageSize": bounded_limit,
+        },
+        timeout=10,
+    )
+    entries = payload.get("entries") if isinstance(payload.get("entries"), list) else []
+    return [_cloud_run_log_item(entry) for entry in entries if isinstance(entry, dict)], http_status, latency_ms
+
+
+def _read_cloud_build_logs(*, hours: int = 24, severity: str = "DEFAULT", limit: int = 50) -> tuple[list[dict], int, int]:
+    bounded_hours = max(1, min(hours, 24))
+    bounded_limit = max(1, min(limit, 100))
+    allowed_severities = {"DEFAULT", "DEBUG", "INFO", "NOTICE", "WARNING", "ERROR", "CRITICAL", "ALERT", "EMERGENCY"}
+    severity_filter = severity.upper() if severity.upper() in allowed_severities else "DEFAULT"
+    since = datetime.now(timezone.utc) - timedelta(hours=bounded_hours)
+    filter_parts = [
+        'resource.type="build"',
+        f'timestamp>="{since.isoformat().replace("+00:00", "Z")}"',
+    ]
+    if severity_filter != "DEFAULT":
+        filter_parts.append(f"severity>={severity_filter}")
+
+    token = _google_access_token(["https://www.googleapis.com/auth/logging.read"])
+    payload, http_status, latency_ms = _post_google_api(
+        "https://logging.googleapis.com/v2/entries:list",
+        token,
+        {
+            "resourceNames": [f"projects/{PROJECT_ID}"],
+            "filter": " AND ".join(filter_parts),
+            "orderBy": "timestamp desc",
+            "pageSize": bounded_limit,
+        },
+        timeout=10,
+    )
+    entries = payload.get("entries") if isinstance(payload.get("entries"), list) else []
+    return [_cloud_build_log_item(entry) for entry in entries if isinstance(entry, dict)], http_status, latency_ms
 
 
 def _check_cloudflare_workers() -> dict:
@@ -1122,3 +1334,157 @@ def operational_resources():
             "resources": resources,
         }
     )
+
+
+@operational_bp.get("/api/console/operations/firebase-hosting/releases")
+@require_capability("console.view_operational_status")
+def firebase_hosting_releases():
+    try:
+        requested_limit = int(request.args.get("limit", "10"))
+    except ValueError:
+        requested_limit = 10
+
+    try:
+        releases, http_status, latency_ms = _read_firebase_hosting_releases(requested_limit)
+        return jsonify(
+            {
+                "status": "ok",
+                "mode": "read_only",
+                "write_enabled": False,
+                "project_id": PROJECT_ID,
+                "site_id": FIREBASE_HOSTING_SITE_ID,
+                "primary_url": FIREBASE_HOSTING_PRIMARY_URL,
+                "console_url": _firebase_console_url(FIREBASE_HOSTING_SITE_ID),
+                "http_status": http_status,
+                "latency_ms": latency_ms,
+                "timestamp": _now_iso(),
+                "releases": releases,
+            }
+        )
+    except urllib.error.HTTPError as exc:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "mode": "read_only",
+                    "write_enabled": False,
+                    "message": f"Firebase Hosting releases probe returned HTTP {exc.code}.",
+                    "http_status": exc.code,
+                    "timestamp": _now_iso(),
+                    "releases": [],
+                }
+            ),
+            502,
+        )
+
+
+def _operational_logs_response(source: str, hours: int, severity: str, limit: int):
+    readers = {
+        "cloud-run-console": {
+            "reader": _read_cloud_run_logs,
+            "service": CONSOLE_CLOUD_RUN_SERVICE,
+            "label": "Cloud Run logs",
+            "permission": "Logging Viewer",
+        },
+        "cloud-build": {
+            "reader": _read_cloud_build_logs,
+            "service": "cloud-build",
+            "label": "Cloud Build logs",
+            "permission": "Logging Viewer",
+        },
+    }
+    selected = readers.get(source)
+    if not selected:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "mode": "read_only",
+                    "write_enabled": False,
+                    "message": "Unsupported log source.",
+                    "allowed_sources": sorted(readers.keys()),
+                    "timestamp": _now_iso(),
+                    "entries": [],
+                }
+            ),
+            400,
+        )
+
+    try:
+        entries, http_status, latency_ms = selected["reader"](hours=hours, severity=severity, limit=limit)
+        return jsonify(
+            {
+                "status": "ok",
+                "mode": "read_only",
+                "write_enabled": False,
+                "source": source,
+                "project_id": PROJECT_ID,
+                "region": REGION,
+                "service": selected["service"],
+                "hours": hours,
+                "severity": severity,
+                "limit": limit,
+                "http_status": http_status,
+                "latency_ms": latency_ms,
+                "timestamp": _now_iso(),
+                "entries": entries,
+            }
+        )
+    except urllib.error.HTTPError as exc:
+        message = f"{selected['label']} API returned HTTP {exc.code}."
+        if exc.code in {401, 403}:
+            message = f"{message} Service account needs {selected['permission']}."
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "mode": "read_only",
+                    "write_enabled": False,
+                    "source": source,
+                    "project_id": PROJECT_ID,
+                    "region": REGION,
+                    "service": selected["service"],
+                    "message": message,
+                    "http_status": exc.code,
+                    "timestamp": _now_iso(),
+                    "entries": [],
+                }
+            ),
+            502,
+        )
+    except Exception as exc:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "mode": "read_only",
+                    "write_enabled": False,
+                    "source": source,
+                    "project_id": PROJECT_ID,
+                    "region": REGION,
+                    "service": selected["service"],
+                    "message": f"{selected['label']} probe failed: {type(exc).__name__}.",
+                    "timestamp": _now_iso(),
+                    "entries": [],
+                }
+            ),
+            502,
+        )
+
+
+@operational_bp.get("/api/console/operations/logs")
+@require_capability("console.view_operational_status")
+def operational_logs():
+    source = request.args.get("source", "cloud-run-console")
+    hours = _bounded_int(request.args.get("hours"), 1, 1, 24)
+    limit = _bounded_int(request.args.get("limit"), 50, 1, 100)
+    severity = (request.args.get("severity") or "DEFAULT").upper()
+    return _operational_logs_response(source, hours, severity, limit)
+
+@operational_bp.get("/api/console/operations/logs/cloud-run")
+@require_capability("console.view_operational_status")
+def cloud_run_logs():
+    hours = _bounded_int(request.args.get("hours"), 1, 1, 24)
+    limit = _bounded_int(request.args.get("limit"), 50, 1, 100)
+    severity = (request.args.get("severity") or "DEFAULT").upper()
+    return _operational_logs_response("cloud-run-console", hours, severity, limit)

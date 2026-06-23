@@ -1,16 +1,20 @@
 // FILE: ~/otmega/otmega_app/console/admin_frontend/src/routes/ConsoleRouter.tsx
 // ماموریت: تعریف routeهای داخلی Admin Console و صفحه های read-only اولیه.
 
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import type { ConsoleBootstrap } from '../App';
 import ConsoleShell from '../components/shell/ConsoleShell';
-import DashboardPage from '../pages/DashboardPage';
-import RoutineTesterPage from '../pages/RoutineTesterPage';
-import RuntimeSettingsPage from '../pages/RuntimeSettingsPage';
-import TraceViewerPage from '../pages/TraceViewerPage';
-import UiTextsMatrixPage from '../pages/UiTextsMatrixPage';
 
-export type ConsoleTab = 'dashboard' | 'runtime' | 'traces' | 'uiTexts' | 'routineTester';
+const DashboardPage = lazy(() => import('../pages/DashboardPage'));
+const FirebaseHostingPage = lazy(() => import('../pages/FirebaseHostingPage'));
+const OperationalLogsPage = lazy(() => import('../pages/OperationalLogsPage'));
+const RoutineTesterPage = lazy(() => import('../pages/RoutineTesterPage'));
+const RuntimeSettingsPage = lazy(() => import('../pages/RuntimeSettingsPage'));
+const TraceViewerPage = lazy(() => import('../pages/TraceViewerPage'));
+const UiTextsMatrixPage = lazy(() => import('../pages/UiTextsMatrixPage'));
+const UserOperationsPage = lazy(() => import('../pages/UserOperationsPage'));
+
+export type ConsoleTab = 'dashboard' | 'runtime' | 'users' | 'hosting' | 'logs' | 'traces' | 'uiTexts' | 'routineTester';
 
 type ConsoleRouterProps = {
   bootstrap: ConsoleBootstrap;
@@ -24,10 +28,16 @@ export default function ConsoleRouter({ bootstrap, onLogout, onRelogin }: Consol
   const page =
     activeTab === 'runtime' ? (
       <RuntimeSettingsPage domains={bootstrap.domains} />
+    ) : activeTab === 'users' ? (
+      <UserOperationsPage canRepair={Boolean(bootstrap.session?.capabilities.includes('console.repair_user_operations'))} />
     ) : activeTab === 'traces' ? (
       <TraceViewerPage />
     ) : activeTab === 'uiTexts' ? (
       <UiTextsMatrixPage />
+    ) : activeTab === 'hosting' ? (
+      <FirebaseHostingPage />
+    ) : activeTab === 'logs' ? (
+      <OperationalLogsPage />
     ) : activeTab === 'routineTester' ? (
       <RoutineTesterPage />
     ) : (
@@ -36,7 +46,9 @@ export default function ConsoleRouter({ bootstrap, onLogout, onRelogin }: Consol
 
   return (
     <ConsoleShell activeTab={activeTab} onLogout={onLogout} onRelogin={onRelogin} onTabChange={setActiveTab} session={bootstrap.session}>
-      {page}
+      <Suspense fallback={<div className="console-panel console-page-loading">Loading console view...</div>}>
+        {page}
+      </Suspense>
     </ConsoleShell>
   );
 }

@@ -12,6 +12,9 @@ READ_ONLY_CAPABILITIES = (
     "console.view_audit",
     "console.view_real_profile",
     "console.view_operational_status",
+    "console.view_user_operations",
+    "console.repair_user_operations",
+    "console.manage_dashboard_settings",
     "console.view_gcs_browser",
     "console.use_transcript_api",
 )
@@ -29,6 +32,8 @@ def capabilities_for_actor(actor) -> list[str]:
             "console.view_trace_summary",
             "console.view_real_profile",
             "console.view_operational_status",
+            "console.view_user_operations",
+            "console.manage_dashboard_settings",
         ]
     if actor.authenticated:
         return ["console.view_health", "console.view_session"]

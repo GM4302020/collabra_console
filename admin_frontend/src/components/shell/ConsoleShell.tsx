@@ -8,16 +8,19 @@ import {
   FlaskConical,
   GitBranch,
   LayoutDashboard,
+  ListTree,
+  Rocket,
   Monitor,
   Moon,
+  Users,
   Settings,
   SlidersHorizontal,
   Sun,
   TableProperties,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import type { ConsoleSession } from '../../api/consoleApi';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { fetchConsoleDashboardSettings, saveConsoleDashboardSettingsSection, type ConsoleSession } from '../../api/consoleApi';
 import type { ConsoleTab } from '../../routes/ConsoleRouter';
 import SessionPanel from './SessionPanel';
 
@@ -40,6 +43,9 @@ const SIDEBAR_COLLAPSED_MAX = 104;
 const tabs: Array<{ key: ConsoleTab; label: string; icon: LucideIcon }> = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'runtime', label: 'Runtime Settings', icon: SlidersHorizontal },
+  { key: 'users', label: 'User Operations', icon: Users },
+  { key: 'hosting', label: 'Hosting Releases', icon: Rocket },
+  { key: 'logs', label: 'Operational Logs', icon: ListTree },
   { key: 'uiTexts', label: 'UI Texts Matrix', icon: TableProperties },
   { key: 'traces', label: 'Trace Viewer', icon: GitBranch },
   { key: 'routineTester', label: 'Routine Tester', icon: FlaskConical },
@@ -84,7 +90,33 @@ export default function ConsoleShell({ activeTab, children, onLogout, onRelogin,
     const stored = window.localStorage.getItem('otmega.console.theme') as ThemeChoice | null;
     return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system';
   });
+  const [settingsReady, setSettingsReady] = useState(false);
+  const lastSavedShellSettingsRef = useRef('');
   const collapsed = sidebarWidth <= SIDEBAR_COLLAPSED_MAX;
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchConsoleDashboardSettings()
+      .then((response) => {
+        if (cancelled) return;
+        const shell = response.settings.shell as { themeChoice?: string; sidebarWidth?: number } | undefined;
+        if (shell?.themeChoice === 'light' || shell?.themeChoice === 'dark' || shell?.themeChoice === 'system') {
+          setThemeChoice(shell.themeChoice);
+        }
+        if (Number.isFinite(shell?.sidebarWidth) && Number(shell?.sidebarWidth) >= SIDEBAR_MIN) {
+          setSidebarWidth(Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(shell?.sidebarWidth))));
+        }
+      })
+      .catch(() => {
+        // Local storage remains the fallback when the GCS-backed settings file is unavailable.
+      })
+      .finally(() => {
+        if (!cancelled) setSettingsReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const applyTheme = () => {
@@ -102,6 +134,18 @@ export default function ConsoleShell({ activeTab, children, onLogout, onRelogin,
   useEffect(() => {
     window.localStorage.setItem('otmega.console.sidebarWidth', String(sidebarWidth));
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (!settingsReady) return;
+    const section = { sidebarWidth, themeChoice };
+    const serialized = JSON.stringify(section);
+    if (lastSavedShellSettingsRef.current === serialized) return;
+    lastSavedShellSettingsRef.current = serialized;
+    const timer = window.setTimeout(() => {
+      void saveConsoleDashboardSettingsSection('shell', section).catch(() => undefined);
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [settingsReady, sidebarWidth, themeChoice]);
 
   const shellStyle = useMemo(
     () => ({ '--console-sidebar-width': `${sidebarWidth}px` }) as CSSProperties,
