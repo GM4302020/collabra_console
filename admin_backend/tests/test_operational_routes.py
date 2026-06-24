@@ -22,6 +22,109 @@ class FakeResponse:
         return json.dumps(self.payload).encode("utf-8")
 
 
+class FakeHeaderResponse:
+    def __init__(self, status=200, headers=None):
+        self.status = status
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def test_edge_routing_probe_reports_ok_when_all_cloudflare(monkeypatch):
+    seen_methods = []
+
+    def fake_urlopen(request, timeout):
+        seen_methods.append(request.get_method())
+        if request.full_url.startswith("https://otmega-4utq3wq6ka-uc.a.run.app"):
+            return FakeHeaderResponse(status=200, headers={"Server": "Google Frontend"})
+        return FakeHeaderResponse(status=200, headers={"Server": "cloudflare", "CF-RAY": "abc123-FRA"})
+
+    monkeypatch.setattr(operational_routes.urllib.request, "urlopen", fake_urlopen)
+
+    resource = operational_routes._check_edge_routing()
+
+    assert resource["status"] == "ok"
+    assert all(method == "GET" for method in seen_methods)
+    metric_states = {metric["label"]: metric["state"] for metric in resource["metrics"]}
+    assert metric_states["app.otmega.com"] == "ok"
+    assert metric_states["api.otmega.com"] == "ok"
+    assert metric_states["db.otmega.com"] == "ok"
+    assert metric_states["files.otmega.com"] == "ok"
+
+
+def test_edge_routing_probe_flags_direct_google_leak(monkeypatch):
+    def fake_urlopen(request, timeout):
+        if request.full_url.startswith("https://files.otmega.com"):
+            return FakeHeaderResponse(status=200, headers={"Server": "Google Frontend"})
+        if request.full_url.startswith("https://otmega-4utq3wq6ka-uc.a.run.app"):
+            return FakeHeaderResponse(status=200, headers={"Server": "Google Frontend"})
+        return FakeHeaderResponse(status=200, headers={"Server": "cloudflare", "CF-RAY": "abc123-FRA"})
+
+    monkeypatch.setattr(operational_routes.urllib.request, "urlopen", fake_urlopen)
+
+    resource = operational_routes._check_edge_routing()
+
+    assert resource["status"] == "error"
+    metric_states = {metric["label"]: metric["state"] for metric in resource["metrics"]}
+    assert metric_states["files.otmega.com"] == "error"
+    assert metric_states["app.otmega.com"] == "ok"
+
+
+def test_notification_state_benign_stale_token_stays_ok(monkeypatch):
+    monkeypatch.setattr(operational_routes, "_supabase_service_role", lambda: "service-role-key")
+    monkeypatch.setattr(
+        operational_routes,
+        "_read_supabase_rows",
+        lambda table, params: (
+            [
+                {"notify_state": "sent"},
+                {"notify_state": "sent"},
+                {"notify_state": "skipped", "last_error": "no_valid_fcm_tokens"},
+                {
+                    "notify_state": "failed",
+                    "last_error": "fcm_http_404: {\"error\":{\"status\":\"NOT_FOUND\"}}",
+                },
+            ],
+            200,
+            12,
+        ),
+    )
+
+    resource = operational_routes._check_notification_state()
+
+    assert resource["status"] == "ok"
+    metric_values = {metric["label"]: metric["value"] for metric in resource["metrics"]}
+    assert metric_values["24h failed (real)"] == "0"
+    assert metric_values["24h stale token"] == "1"
+
+
+def test_notification_state_real_failure_warns(monkeypatch):
+    monkeypatch.setattr(operational_routes, "_supabase_service_role", lambda: "service-role-key")
+    monkeypatch.setattr(
+        operational_routes,
+        "_read_supabase_rows",
+        lambda table, params: (
+            [
+                {"notify_state": "sent"},
+                {"notify_state": "failed", "last_error": "fcm_http_500: internal error"},
+            ],
+            200,
+            9,
+        ),
+    )
+
+    resource = operational_routes._check_notification_state()
+
+    assert resource["status"] == "warn"
+    metric_values = {metric["label"]: metric["value"] for metric in resource["metrics"]}
+    assert metric_values["24h failed (real)"] == "1"
+    assert metric_values["24h stale token"] == "0"
+
+
 def test_cloudflare_workers_probe_reports_ok_without_writes(monkeypatch):
     seen_requests = []
 

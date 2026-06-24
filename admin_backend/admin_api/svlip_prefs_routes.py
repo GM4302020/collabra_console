@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 BUCKET_NAME = os.environ.get("APP_DATA_BUCKET_NAME", "otmega-collabra-secure")
 PREFS_BLOB = "advisors/collabra-20018-v1.0.0/main-data/svlip_model_language_prefs.json"
 LIVE_ASR_CONFIG_BLOB = "advisors/collabra-20018-v1.0.0/main-data/live_asr_config.json"
+SVLIP_LIP_CONFIG_BLOB = "advisors/collabra-20018-v1.0.0/main-data/svlip_lip_config.json"
 MAIN_BACKEND_URL = os.environ.get("MAIN_BACKEND_URL", "https://api.otmega.com")
 
 _LIVE_ASR_MODELS = {
@@ -28,6 +29,46 @@ _LIVE_ASR_MODELS = {
 _LIVE_ASR_CONFIG_DEFAULT: dict = {
     "active_model": "whisper-large-v3",
     "available_models": sorted(_LIVE_ASR_MODELS),
+}
+_SVLIP_LIP_MODELS = {
+    "wf1-runtime",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gpt-4o-mini",
+}
+_SVLIP_LIP_CONFIG_DEFAULT: dict = {
+    "active_model_key": "wf1-runtime",
+    "available_models": [
+        {
+            "key": "wf1-runtime",
+            "label": "WF1 Runtime LIP",
+            "source": "config_domain_registry:wf1_translation_llm",
+        },
+        {
+            "key": "gemini-2.5-flash",
+            "label": "Gemini 2.5 Flash",
+            "provider": "google",
+            "model": "gemini-2.5-flash",
+            "api_key_env": "GEMINI_API_KEY_25",
+        },
+        {
+            "key": "gemini-2.5-pro",
+            "label": "Gemini 2.5 Pro",
+            "provider": "google",
+            "model": "gemini-2.5-pro",
+            "api_key_env": "GEMINI_API_KEY_25",
+        },
+        {
+            "key": "gpt-4o-mini",
+            "label": "OpenAI GPT-4o Mini",
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "api_key_env": "OPENAI_API_KEY",
+        },
+    ],
+    "default_target_source": "voice_language_context.targets[0].target_lang",
+    "allow_manual_target_override": True,
+    "persist_preview_to_message": False,
 }
 
 _storage_client: storage.Client | None = None
@@ -158,4 +199,56 @@ def set_live_asr_config():
         return jsonify({"status": "ok", "config": config})
     except Exception as e:
         logger.error("live_asr_config: write failed: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _sanitize_lip_config(raw_config: dict | None) -> dict:
+    config = _SVLIP_LIP_CONFIG_DEFAULT.copy()
+    if isinstance(raw_config, dict):
+        config.update(raw_config)
+    active_model = str(config.get("active_model_key") or "").strip()
+    if active_model not in _SVLIP_LIP_MODELS:
+        config["active_model_key"] = "wf1-runtime"
+    config["available_models"] = _SVLIP_LIP_CONFIG_DEFAULT["available_models"]
+    config["persist_preview_to_message"] = False
+    config["allow_manual_target_override"] = bool(config.get("allow_manual_target_override", True))
+    return config
+
+
+@svlip_prefs_bp.get("/api/console/svlip/lip-config")
+@require_capability("console.use_transcript_api")
+def get_svlip_lip_config():
+    """بازیابی تنظیمات LIP Preview از GCS — منبع مشترک Console/Collabra."""
+    try:
+        blob = _get_storage().bucket(BUCKET_NAME).blob(SVLIP_LIP_CONFIG_BLOB)
+        raw_config = json.loads(blob.download_as_text(encoding="utf-8")) if blob.exists() else None
+        return jsonify({"status": "ok", "bucket": BUCKET_NAME, "path": SVLIP_LIP_CONFIG_BLOB, "config": _sanitize_lip_config(raw_config)})
+    except Exception as e:
+        logger.error("svlip_lip_config: read failed: %s", e)
+        return jsonify({"status": "ok", "bucket": BUCKET_NAME, "path": SVLIP_LIP_CONFIG_BLOB, "config": _sanitize_lip_config(None)})
+
+
+@svlip_prefs_bp.post("/api/console/svlip/lip-config")
+@require_capability("console.use_transcript_api")
+def set_svlip_lip_config():
+    """ذخیره تنظیمات LIP Preview در GCS."""
+    payload = request.get_json(silent=True) or {}
+    active_model = str(payload.get("active_model_key") or "").strip()
+    if active_model not in _SVLIP_LIP_MODELS:
+        return jsonify({"status": "error", "message": f"active_model_key must be one of: {', '.join(sorted(_SVLIP_LIP_MODELS))}"}), 400
+    try:
+        config = _sanitize_lip_config({
+            "active_model_key": active_model,
+            "allow_manual_target_override": bool(payload.get("allow_manual_target_override", True)),
+            "default_target_source": "voice_language_context.targets[0].target_lang",
+            "persist_preview_to_message": False,
+        })
+        blob = _get_storage().bucket(BUCKET_NAME).blob(SVLIP_LIP_CONFIG_BLOB)
+        blob.upload_from_string(
+            json.dumps(config, ensure_ascii=False, indent=2),
+            content_type="application/json",
+        )
+        return jsonify({"status": "ok", "bucket": BUCKET_NAME, "path": SVLIP_LIP_CONFIG_BLOB, "config": config})
+    except Exception as e:
+        logger.error("svlip_lip_config: write failed: %s", e)
         return jsonify({"status": "error", "message": str(e)}), 500

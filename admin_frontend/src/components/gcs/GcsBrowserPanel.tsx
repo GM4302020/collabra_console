@@ -14,12 +14,19 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   browseGcsBucket,
+  getGcsAudioContext,
   getGcsSignedUrl,
   getModelPrefs,
+  getSvlipLipConfig,
   requestTranscript,
+  requestLipTranslation,
   setModelPref,
+  setSvlipLipConfig,
+  type GcsAudioContextResponse,
+  type GcsAudioContextUser,
   type GcsBrowseFile,
   type GcsBrowseFolder,
+  type SvlipLipConfig,
 } from '../../api/consoleApi';
 
 const LLM_OPTIONS = [
@@ -30,6 +37,12 @@ const LLM_OPTIONS = [
   { key: 'gpt-audio', label: 'GPT-Audio 1.5' },
   // { key: 'mai-transcribe', label: 'MAI Transcribe 1.5' },  // فعال‌سازی پس از ست کردن AZURE_SPEECH_KEY
 ] as const;
+
+const TRANSCRIPT_RUNTIME_ADVICE = {
+  currentTimeoutSeconds: 30,
+  recommendedTimeoutSeconds: 150,
+  recommendedMemory: '1Gi',
+};
 
 const LANG_NAMES: Record<string, string> = {
   // اروپای غربی
@@ -67,6 +80,12 @@ type MediaState =
   | { kind: 'image'; path: string; url: string }
   | { kind: 'error'; path: string; message: string };
 
+type AudioContextState =
+  | { kind: 'idle' }
+  | { kind: 'loading'; path: string }
+  | { kind: 'loaded'; path: string; data: GcsAudioContextResponse }
+  | { kind: 'error'; path: string; message: string };
+
 type TranscriptResult = {
   llmKey: string;
   llmDisplayName: string;
@@ -86,6 +105,63 @@ type TranscriptResult = {
   estimatedCostUsd: number | null;
   latencyMs: number;
 };
+
+type LipTranslationResult = {
+  llmKey: string;
+  llmDisplayName: string;
+  fallbackFromModelKey: string | null;
+  sourceLang: string;
+  targetLang: string;
+  translatedText: string;
+  pivotText: string | null;
+  latencyMs: number;
+  persisted: boolean;
+};
+
+function shouldShowTranscriptRuntimeAdvice(message: string | null): boolean {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('/api/console/gcs/transcribe failed with 500') ||
+    normalized.includes('worker timeout') ||
+    normalized.includes('timed out') ||
+    normalized.includes('timeout') ||
+    normalized.includes('503')
+  );
+}
+
+function languageLabel(code: string | null | undefined): string {
+  if (!code) return 'Unknown';
+  const normalized = code.toLowerCase();
+  const name = LANG_NAMES[normalized];
+  return name ? `${normalized.toUpperCase()} ${name}` : normalized.toUpperCase();
+}
+
+function userLabel(user: GcsAudioContextUser | undefined): string {
+  if (!user) return 'Unknown user';
+  return user.full_name || user.email || user.user_id;
+}
+
+function userSubLabel(user: GcsAudioContextUser | undefined): string {
+  if (!user) return '';
+  if (user.full_name && user.email) return user.email;
+  return user.role || user.country_code || '';
+}
+
+function languageSourceLabel(source: string | null | undefined): string {
+  if (!source) return 'no language source';
+  if (source === 'messages.src_lang') return 'message src_lang';
+  if (source === 'messages.text_translations.keys') return 'translation history';
+  if (source.includes('last_typed_lang_current')) return 'current profile fallback';
+  if (source.startsWith('metadata.')) return 'message metadata';
+  return source;
+}
+
+function firstContextTargetLang(context: AudioContextState): string {
+  if (context.kind !== 'loaded' || context.data.status !== 'ok') return '';
+  const target = (context.data.recipients || []).find((recipient) => recipient.language);
+  return target?.language || '';
+}
 
 function buildBreadcrumbs(prefix: string): Array<{ label: string; prefix: string }> {
   const crumbs: Array<{ label: string; prefix: string }> = [{ label: 'root', prefix: '' }];
@@ -108,12 +184,19 @@ export default function GcsBrowserPanel() {
   const [loading, setLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [media, setMedia] = useState<MediaState>({ kind: 'idle' });
+  const [audioContext, setAudioContext] = useState<AudioContextState>({ kind: 'idle' });
 
   // transcript state — array so multiple LLM results stack
   const [selectedLlm, setSelectedLlm] = useState<string>('gemini-2.5-flash');
   const [transcriptResults, setTranscriptResults] = useState<TranscriptResult[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  const [lipResults, setLipResults] = useState<Record<number, LipTranslationResult>>({});
+  const [lipLoadingIndex, setLipLoadingIndex] = useState<number | null>(null);
+  const [lipErrors, setLipErrors] = useState<Record<number, string>>({});
+  const [lipConfig, setLipConfig] = useState<SvlipLipConfig | null>(null);
+  const [selectedLipModel, setSelectedLipModel] = useState('wf1-runtime');
+  const [targetLangOverride, setTargetLangOverride] = useState('');
   const [audioDuration, setAudioDuration] = useState<number | null>(null);
   const [modelPrefs, setModelPrefs] = useState<Record<string, string>>({});
   const [prefsLoading, setPrefsLoading] = useState(false);
@@ -132,7 +215,20 @@ export default function GcsBrowserPanel() {
       .then((r) => setModelPrefs(r.prefs))
       .catch(() => {/* silent — prefs optional */})
       .finally(() => setPrefsLoading(false));
+    getSvlipLipConfig()
+      .then((r) => {
+        setLipConfig(r.config);
+        setSelectedLipModel(r.config.active_model_key || 'wf1-runtime');
+      })
+      .catch(() => {/* silent — LIP config falls back in backend */});
   }, []);
+
+  useEffect(() => {
+    const contextTarget = firstContextTargetLang(audioContext);
+    if (contextTarget && !targetLangOverride) {
+      setTargetLangOverride(contextTarget);
+    }
+  }, [audioContext, targetLangOverride]);
 
   // Auto-select: after a new result arrives, switch dropdown to preferred model for detected language
   useEffect(() => {
@@ -167,7 +263,22 @@ export default function GcsBrowserPanel() {
     setTranscriptResults([]);
     setTranscriptError(null);
     setTranscriptLoading(false);
+    setLipResults({});
+    setLipErrors({});
+    setLipLoadingIndex(null);
     setAudioDuration(null);
+  }
+
+  function clearAudioContext() {
+    setAudioContext({ kind: 'idle' });
+    setTargetLangOverride('');
+  }
+
+  function handleLipModelChange(modelKey: string) {
+    setSelectedLipModel(modelKey);
+    void setSvlipLipConfig(modelKey)
+      .then((r) => setLipConfig(r.config))
+      .catch(() => {/* model still usable for this session */});
   }
 
   const loadPrefix = useCallback(async (nextPrefix: string, pageToken?: string) => {
@@ -200,18 +311,33 @@ export default function GcsBrowserPanel() {
     if (!file.is_audio && !file.is_image) return;
     if (media.kind !== 'idle' && media.kind !== 'error' && (media as { path: string }).path === file.name) {
       setMedia({ kind: 'idle' });
+      clearAudioContext();
       return;
     }
     setMedia({ kind: 'loading', path: file.name });
     clearTranscript();
+    if (file.is_audio) {
+      setAudioContext({ kind: 'loading', path: file.name });
+    } else {
+      clearAudioContext();
+    }
     try {
-      const response = await getGcsSignedUrl(file.name);
+      const [response, context] = await Promise.all([
+        getGcsSignedUrl(file.name),
+        file.is_audio ? getGcsAudioContext(file.name).catch((error) => error as Error) : Promise.resolve(null),
+      ]);
       if (file.is_audio) {
         setMedia({ kind: 'audio', path: file.name, url: response.signed_url, mimeType: file.content_type || 'audio/mp3' });
+        if (context instanceof Error) {
+          setAudioContext({ kind: 'error', path: file.name, message: context.message || 'Audio context lookup failed.' });
+        } else if (context) {
+          setAudioContext({ kind: 'loaded', path: file.name, data: context });
+        }
       } else {
         setMedia({ kind: 'image', path: file.name, url: response.signed_url });
       }
     } catch (error) {
+      clearAudioContext();
       setMedia({
         kind: 'error',
         path: file.name,
@@ -224,6 +350,7 @@ export default function GcsBrowserPanel() {
     if (media.kind === 'audio' || media.kind === 'image') {
       setMedia({ kind: 'idle' });
       clearTranscript();
+      clearAudioContext();
     }
     void loadPrefix(folder.prefix);
   }
@@ -233,6 +360,7 @@ export default function GcsBrowserPanel() {
     if (media.kind === 'audio' || media.kind === 'image') {
       setMedia({ kind: 'idle' });
       clearTranscript();
+      clearAudioContext();
     }
     void loadPrefix(crumbPrefix);
   }
@@ -271,6 +399,50 @@ export default function GcsBrowserPanel() {
       setTranscriptError(error instanceof Error ? error.message : 'Transcript request failed.');
     } finally {
       setTranscriptLoading(false);
+    }
+  }
+
+  async function handleLipTranslate(result: TranscriptResult, index: number) {
+    const targetLang = (targetLangOverride || firstContextTargetLang(audioContext)).trim().toLowerCase();
+    if (!targetLang) {
+      setLipErrors((prev) => ({ ...prev, [index]: 'Target language is missing. Select a destination language first.' }));
+      return;
+    }
+    setLipLoadingIndex(index);
+    setLipErrors((prev) => {
+      const updated = { ...prev };
+      delete updated[index];
+      return updated;
+    });
+    try {
+      const response = await requestLipTranslation({
+        transcript: result.transcript,
+        source_lang: result.detectedLanguage,
+        target_lang: targetLang,
+        model_key: selectedLipModel,
+      });
+      const d = response.data;
+      setLipResults((prev) => ({
+        ...prev,
+        [index]: {
+          llmKey: d.model_key,
+          llmDisplayName: d.model_display_name,
+          fallbackFromModelKey: d.fallback_from_model_key ?? null,
+          sourceLang: d.source_lang,
+          targetLang: d.target_lang,
+          translatedText: d.translated_text,
+          pivotText: d.pivot_text,
+          latencyMs: d.latency_ms,
+          persisted: d.persisted,
+        },
+      }));
+    } catch (error) {
+      setLipErrors((prev) => ({
+        ...prev,
+        [index]: error instanceof Error ? error.message : 'LIP translation failed.',
+      }));
+    } finally {
+      setLipLoadingIndex(null);
     }
   }
 
@@ -393,6 +565,53 @@ export default function GcsBrowserPanel() {
             src={media.url}
             style={{ width: '100%' }}
           />
+          {audioContext.kind === 'loading' ? (
+            <div className="gcs-audio-context-panel muted">
+              <Loader2 aria-hidden="true" className="spin" size={14} />
+              <span>Loading conversation context</span>
+            </div>
+          ) : audioContext.kind === 'error' ? (
+            <div className="gcs-audio-context-panel error">
+              <strong>Conversation context unavailable</strong>
+              <span>{audioContext.message}</span>
+            </div>
+          ) : audioContext.kind === 'loaded' && audioContext.data.status === 'not_found' ? (
+            <div className="gcs-audio-context-panel muted">
+              <strong>Conversation context not found</strong>
+              <span>{audioContext.data.message || 'No message record matched this audio file path.'}</span>
+            </div>
+          ) : audioContext.kind === 'loaded' && audioContext.data.status === 'ok' ? (
+            <div className="gcs-audio-context-panel">
+              <div className="gcs-audio-context-header">
+                <strong>Conversation context</strong>
+                <span>{audioContext.data.conversation?.id || 'unknown conversation'}</span>
+                {audioContext.data.message_record?.id ? <span>message {audioContext.data.message_record.id}</span> : null}
+              </div>
+              <div className="gcs-audio-context-grid">
+                <div className="gcs-audio-context-card source">
+                  <small>Source voice</small>
+                  <strong>{languageLabel(audioContext.data.sender?.language)}</strong>
+                  <span>{userLabel(audioContext.data.sender)}</span>
+                  <em>{userSubLabel(audioContext.data.sender)}</em>
+                  <b>{languageSourceLabel(audioContext.data.sender?.language_source)}</b>
+                </div>
+                {(audioContext.data.recipients || []).map((recipient) => (
+                  <div className="gcs-audio-context-card" key={recipient.user_id}>
+                    <small>Destination</small>
+                    <strong>{languageLabel(recipient.language)}</strong>
+                    <span>{userLabel(recipient)}</span>
+                    <em>{userSubLabel(recipient)}</em>
+                    <b>{languageSourceLabel(recipient.language_source)}</b>
+                  </div>
+                ))}
+              </div>
+              {!audioContext.data.language_summary?.historical_destination_available ? (
+                <p className="gcs-audio-context-note">
+                  Destination language is from the recipient profile unless message metadata has historical language data.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           <div className="gcs-transcript-actions">
             <select
               className="gcs-transcript-llm-select"
@@ -536,11 +755,80 @@ export default function GcsBrowserPanel() {
                     <span className="gcs-transcript-cost">~${result.estimatedCostUsd.toFixed(4)}</span>
                   ) : null}
                 </div>
+                <div className="gcs-lip-preview-panel">
+                  <div className="gcs-lip-preview-controls">
+                    <select
+                      className="gcs-transcript-llm-select"
+                      onChange={(e) => handleLipModelChange(e.target.value)}
+                      value={selectedLipModel}
+                    >
+                      {(lipConfig?.available_models || [{ key: 'wf1-runtime', label: 'WF1 Runtime LIP' }]).map((opt) => (
+                        <option key={opt.key} value={opt.key}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className="gcs-lip-target-input"
+                      maxLength={5}
+                      onChange={(e) => setTargetLangOverride(e.target.value.toLowerCase())}
+                      placeholder="target"
+                      value={targetLangOverride}
+                    />
+                    <button
+                      className="console-secondary-button"
+                      disabled={lipLoadingIndex === index}
+                      onClick={() => void handleLipTranslate(result, index)}
+                      type="button"
+                    >
+                      {lipLoadingIndex === index ? <Loader2 aria-hidden="true" className="spin" size={15} /> : null}
+                      Get LIP
+                    </button>
+                  </div>
+                  <div className="gcs-lip-preview-grid">
+                    <div>
+                      <small>Transcript source</small>
+                      <strong>{languageLabel(result.detectedLanguage)}</strong>
+                      <p>{result.transcript}</p>
+                    </div>
+                    <div>
+                      <small>LIP destination</small>
+                      <strong>{languageLabel(lipResults[index]?.targetLang || targetLangOverride)}</strong>
+                      <p>{lipResults[index]?.translatedText || 'Run LIP to preview the destination-language text.'}</p>
+                    </div>
+                  </div>
+                  {lipResults[index] ? (
+                    <div className="gcs-lip-preview-meta">
+                      <span>{lipResults[index].llmDisplayName}</span>
+                      {lipResults[index].fallbackFromModelKey ? <span>fallback from {lipResults[index].fallbackFromModelKey}</span> : null}
+                      <span>latency: {(lipResults[index].latencyMs / 1000).toFixed(2)}s</span>
+                      <span>{lipResults[index].persisted ? 'persisted' : 'preview only'}</span>
+                    </div>
+                  ) : null}
+                  {lipErrors[index] ? <div className="console-alert error">{lipErrors[index]}</div> : null}
+                </div>
               </div>
             </div>
           ))}
 
-          {transcriptError ? <div className="console-alert error">{transcriptError}</div> : null}
+          {transcriptError ? (
+            <div className="console-alert error">
+              {transcriptError}
+              {shouldShowTranscriptRuntimeAdvice(transcriptError) ? (
+                <div className="gcs-transcript-runtime-advice">
+                  <strong>Transcript runtime recommendation</strong>
+                  <span>
+                    Current worker timeout is probably {TRANSCRIPT_RUNTIME_ADVICE.currentTimeoutSeconds}s on the old
+                    revision. Recommended: {TRANSCRIPT_RUNTIME_ADVICE.recommendedTimeoutSeconds}s and backend memory{' '}
+                    {TRANSCRIPT_RUNTIME_ADVICE.recommendedMemory}.
+                  </span>
+                  <span>
+                    Apply by deploying `otmega` and `otmega-console` with `GUNICORN_TIMEOUT_SECONDS=150`.
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

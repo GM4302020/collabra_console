@@ -11,4 +11,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 EXPOSE 8080
-CMD gunicorn --bind "0.0.0.0:$PORT" app:app
+CMD exec gunicorn --bind "0.0.0.0:$PORT" --timeout "${GUNICORN_TIMEOUT_SECONDS:-150}" --graceful-timeout "${GUNICORN_GRACEFUL_TIMEOUT_SECONDS:-30}" app:app

@@ -169,7 +169,8 @@ Invoke-CheckedStep "Deploy production Admin Console to Cloud Run" {
   --project $ProjectId `
   --platform managed `
   --allow-unauthenticated `
-  --set-env-vars="CONSOLE_MODE=read_only,CONSOLE_ADVISOR_ID=20018,APP_DATA_BUCKET_NAME=otmega-collabra-secure,GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcs-signer-key,MAIN_BACKEND_URL=https://otmega-4utq3wq6ka-uc.a.run.app,FIREBASE_HOSTING_SITE_ID=ot-ai-advisor,FIREBASE_HOSTING_PRIMARY_URL=https://app.otmega.com" `
+  --timeout=300 `
+  --set-env-vars="CONSOLE_MODE=read_only,CONSOLE_ADVISOR_ID=20018,APP_DATA_BUCKET_NAME=otmega-collabra-secure,GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcs-signer-key,MAIN_BACKEND_URL=https://otmega-4utq3wq6ka-uc.a.run.app,GUNICORN_TIMEOUT_SECONDS=150,GUNICORN_GRACEFUL_TIMEOUT_SECONDS=30,MAIN_BACKEND_GUNICORN_TIMEOUT_SECONDS=150,TRANSCRIPT_RECOMMENDED_TIMEOUT_SECONDS=150,FIREBASE_HOSTING_SITE_ID=ot-ai-advisor,FIREBASE_HOSTING_PRIMARY_URL=https://app.otmega.com" `
   --set-secrets="FLASK_SECRET_KEY=FLASK_SECRET_KEY:latest" `
   --set-secrets="FALLBACK_ADMIN_USER=FALLBACK_ADMIN_USER:latest" `
   --set-secrets="FALLBACK_ADMIN_PASS=FALLBACK_ADMIN_PASS:latest" `

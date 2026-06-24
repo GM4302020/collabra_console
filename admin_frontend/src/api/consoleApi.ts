@@ -614,6 +614,52 @@ export function getGcsSignedUrl(path: string): Promise<GcsSignedUrlResponse> {
   return postJson<GcsSignedUrlResponse>('/api/console/gcs/signed-url', { path });
 }
 
+export type GcsAudioContextUser = {
+  user_id: string;
+  email: string | null;
+  full_name: string | null;
+  role: string | null;
+  country_code: string | null;
+  language: string | null;
+  language_source: string | null;
+  current_profile_language: string | null;
+};
+
+export type GcsAudioContextResponse = {
+  status: 'ok' | 'not_found' | 'error';
+  bucket: string;
+  blob_name: string;
+  match_strategy: string;
+  message?: string;
+  conversation?: {
+    id: string;
+    participant_count: number;
+  };
+  message_record?: {
+    id: string | null;
+    created_at: string | null;
+    type: string | null;
+    status: string | null;
+    client_message_id: string | null;
+    metadata_paths: string[];
+  };
+  sender?: GcsAudioContextUser;
+  recipients?: GcsAudioContextUser[];
+  participants?: GcsAudioContextUser[];
+  language_summary?: {
+    source_language: string | null;
+    source_language_source: string | null;
+    destination_languages: Array<{ user_id: string; language: string | null; source: string | null }>;
+    historical_destination_available: boolean;
+  };
+};
+
+export function getGcsAudioContext(blobName: string): Promise<GcsAudioContextResponse> {
+  return postJson<GcsAudioContextResponse>('/api/console/gcs/audio-context', {
+    blob_name: blobName,
+  });
+}
+
 export type TranscriptData = {
   model_key: string;
   model_display_name: string;
@@ -647,6 +693,32 @@ export function requestTranscript(blobName: string, mimeType: string, modelKey: 
   });
 }
 
+export type LipTranslationData = {
+  model_key: string;
+  model_display_name: string;
+  fallback_from_model_key?: string | null;
+  source_lang: string;
+  target_lang: string;
+  pivot_text: string | null;
+  translated_text: string;
+  latency_ms: number;
+  persisted: boolean;
+};
+
+export type LipTranslationResponse = {
+  status: string;
+  data: LipTranslationData;
+};
+
+export function requestLipTranslation(payload: {
+  transcript: string;
+  source_lang: string;
+  target_lang: string;
+  model_key: string;
+}): Promise<LipTranslationResponse> {
+  return postJson<LipTranslationResponse>('/api/console/gcs/lip-translate', payload);
+}
+
 // ─── SVLIP Model Language Preferences (GCS-backed, cross-device) ─────────────
 
 export type ModelPrefs = Record<string, string>;
@@ -665,6 +737,43 @@ export function setModelPref(language: string, modelKey: string | null): Promise
     language,
     model_key: modelKey ?? '',
     clear: modelKey === null,
+  });
+}
+
+// ─── SVLIP LIP Translation Config (GCS-backed, shared with Collabra) ────────
+
+export type SvlipLipModelOption = {
+  key: string;
+  label: string;
+  provider?: string;
+  model?: string;
+  api_key_env?: string;
+  source?: string;
+};
+
+export type SvlipLipConfig = {
+  active_model_key: string;
+  available_models: SvlipLipModelOption[];
+  default_target_source: string;
+  allow_manual_target_override: boolean;
+  persist_preview_to_message: boolean;
+};
+
+export type SvlipLipConfigResponse = {
+  status: string;
+  bucket: string;
+  path: string;
+  config: SvlipLipConfig;
+};
+
+export function getSvlipLipConfig(): Promise<SvlipLipConfigResponse> {
+  return getJson<SvlipLipConfigResponse>('/api/console/svlip/lip-config');
+}
+
+export function setSvlipLipConfig(activeModelKey: string): Promise<SvlipLipConfigResponse> {
+  return postJson<SvlipLipConfigResponse>('/api/console/svlip/lip-config', {
+    active_model_key: activeModelKey,
+    allow_manual_target_override: true,
   });
 }
 

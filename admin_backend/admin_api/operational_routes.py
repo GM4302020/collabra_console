@@ -23,6 +23,7 @@ ADVISOR_ID = os.environ.get("CONSOLE_ADVISOR_ID", "20018")
 FIREBASE_HOSTING_SITE_ID = os.environ.get("FIREBASE_HOSTING_SITE_ID") or "ot-ai-advisor"
 FIREBASE_HOSTING_PRIMARY_URL = os.environ.get("FIREBASE_HOSTING_PRIMARY_URL") or "https://app.otmega.com"
 CONSOLE_CLOUD_RUN_SERVICE = os.environ.get("CONSOLE_CLOUD_RUN_SERVICE") or "otmega-console"
+RECOMMENDED_TRANSCRIPT_TIMEOUT_SECONDS = 150
 DIGEST_PATTERN = re.compile(r"(sha256:[0-9a-f]{16,64})", re.IGNORECASE)
 
 
@@ -983,6 +984,22 @@ def _check_profile_presence() -> dict:
         )
 
 
+def _is_benign_fcm_failure(last_error: str | None) -> bool:
+    """A failed record that reflects an absent/stale push destination, not a real send error.
+
+    These come from normal device churn (app uninstalled, FCM token rotated) and the worker
+    already cleans the offending token, so they must not keep the health card permanently yellow.
+    """
+    text = last_error or ""
+    lowered = text.lower()
+    return (
+        text == "no_valid_fcm_tokens"
+        or "unregistered" in lowered
+        or "registration-token-not-registered" in lowered
+        or lowered.startswith("fcm_http_404:")
+    )
+
+
 def _check_notification_state() -> dict:
     if not _supabase_service_role():
         return _ok_or_warn_service_role_resource(
@@ -1004,20 +1021,28 @@ def _check_notification_state() -> dict:
             },
         )
         sent = sum(1 for row in rows if row.get("notify_state") == "sent")
-        failed = sum(1 for row in rows if row.get("notify_state") == "failed")
+        failed_rows = [row for row in rows if row.get("notify_state") == "failed"]
         pending = sum(1 for row in rows if row.get("notify_state") == "pending")
-        status = "warn" if failed or pending else "ok"
+        stale_token_failed = sum(1 for row in failed_rows if _is_benign_fcm_failure(row.get("last_error")))
+        real_failed = len(failed_rows) - stale_token_failed
+        # Only genuine send failures or stuck pending should raise the card; benign stale-token
+        # churn (unregistered / no valid token) is expected and does not mean the worker is broken.
+        status = "warn" if real_failed or pending else "ok"
         return _resource(
             resource_id="db-notification-state",
             group="Edge",
             name="Notification State",
             kind="FCM worker / dedupe",
             status=status,
-            summary=f"Notification dedupe probe read {len(rows)} rows from the last 24 hours.",
+            summary=(
+                f"Notification dedupe read {len(rows)} rows (24h): {sent} sent, "
+                f"{real_failed} real-failed, {stale_token_failed} stale-token, {pending} pending."
+            ),
             latency_ms=latency_ms,
             metrics=[
                 _metric("24h sent", str(sent), "ok" if sent else "neutral"),
-                _metric("24h failed", str(failed), "warn" if failed else "ok"),
+                _metric("24h failed (real)", str(real_failed), "warn" if real_failed else "ok"),
+                _metric("24h stale token", str(stale_token_failed), "neutral"),
                 _metric("24h pending", str(pending), "warn" if pending else "ok"),
                 _metric("HTTP", str(http_status), "ok"),
             ],
@@ -1229,6 +1254,152 @@ def _check_collabra_api() -> dict:
     )
 
 
+def _int_from_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _check_transcript_runtime_capacity() -> dict:
+    console_timeout = _int_from_env("GUNICORN_TIMEOUT_SECONDS", 30)
+    backend_timeout = _int_from_env("MAIN_BACKEND_GUNICORN_TIMEOUT_SECONDS", 30)
+    recommended_timeout = _int_from_env("TRANSCRIPT_RECOMMENDED_TIMEOUT_SECONDS", RECOMMENDED_TRANSCRIPT_TIMEOUT_SECONDS)
+
+    status = "ok"
+    summary = "Transcript runtime timeout is aligned with long-running SVLIP requests."
+    if console_timeout < recommended_timeout or backend_timeout < recommended_timeout:
+        status = "warn"
+        summary = (
+            f"Transcript can exceed worker timeout. Current console/backend timeout: "
+            f"{console_timeout}s/{backend_timeout}s. Recommended: {recommended_timeout}s and otmega memory >= 1Gi."
+        )
+
+    return _resource(
+        resource_id="transcript-runtime-capacity",
+        group="Compute",
+        name="Transcript Runtime Capacity",
+        kind="Gunicorn / Cloud Run timeout",
+        status=status,
+        summary=summary,
+        primary_url="https://otmega-console-90514070755.us-central1.run.app",
+        console_url=(
+            "https://console.cloud.google.com/run/detail/"
+            f"{REGION}/otmega/metrics?project={PROJECT_ID}"
+        ),
+        metrics=[
+            _metric("console timeout", f"{console_timeout}s", "ok" if console_timeout >= recommended_timeout else "warn"),
+            _metric("backend timeout", f"{backend_timeout}s", "ok" if backend_timeout >= recommended_timeout else "warn"),
+            _metric("recommended", f"{recommended_timeout}s", "neutral"),
+            _metric("backend memory", ">= 1Gi", "neutral"),
+        ],
+        links=[
+            _link("Backend Cloud Run", f"https://console.cloud.google.com/run/detail/{REGION}/otmega/metrics?project={PROJECT_ID}"),
+            _link("Console Cloud Run", f"https://console.cloud.google.com/run/detail/{REGION}/otmega-console/metrics?project={PROJECT_ID}"),
+        ],
+    )
+
+
+# Critical Collabra hosts that MUST be served through Cloudflare so Iran users work without VPN.
+EDGE_ROUTING_HOSTS = [
+    ("app.otmega.com", "https://app.otmega.com/"),
+    ("api.otmega.com", "https://api.otmega.com/api/get_ui_settings"),
+    ("db.otmega.com", "https://db.otmega.com/auth/v1/health"),
+    ("files.otmega.com", "https://files.otmega.com/"),
+]
+# Direct Google Cloud Run host. The frontend must NOT call it directly (sanction regression marker).
+EDGE_ROUTING_DIRECT_HOST = ("otmega-4utq3wq6ka-uc.a.run.app", "https://otmega-4utq3wq6ka-uc.a.run.app/")
+
+
+def _probe_edge_signal(url: str, *, timeout: int = 6) -> dict:
+    """Light read-only GET that captures whether a host is fronted by Cloudflare or hits Google directly."""
+    start = time.perf_counter()
+    server = ""
+    cf_ray = ""
+    http_status = "failed"
+    error = None
+    try:
+        probe_request = urllib.request.Request(url, headers={"User-Agent": "otmega-admin-console/1.0"}, method="GET")
+        with urllib.request.urlopen(probe_request, timeout=timeout) as response:
+            http_status = str(response.status)
+            server = response.headers.get("Server", "") or ""
+            cf_ray = response.headers.get("CF-RAY", "") or ""
+    except urllib.error.HTTPError as exc:
+        http_status = str(exc.code)
+        if exc.headers:
+            server = exc.headers.get("Server", "") or ""
+            cf_ray = exc.headers.get("CF-RAY", "") or ""
+    except Exception as exc:
+        error = type(exc).__name__
+
+    return {
+        "url": url,
+        "http_status": http_status,
+        "server": server or "(none)",
+        "cf_ray_present": bool(cf_ray),
+        "behind_cloudflare": bool(cf_ray) or ("cloudflare" in server.lower()),
+        "is_google_frontend": "google frontend" in server.lower(),
+        "error": error,
+        "latency_ms": _elapsed_ms(start),
+    }
+
+
+def _check_edge_routing() -> dict:
+    total_latency = 0
+    metrics: list[dict] = []
+    leaks: list[str] = []
+    unreachable: list[str] = []
+
+    for host, url in EDGE_ROUTING_HOSTS:
+        signal = _probe_edge_signal(url)
+        total_latency += signal["latency_ms"]
+        if signal["error"]:
+            unreachable.append(host)
+            metrics.append(_metric(host, f"probe failed: {signal['error']}", "unknown"))
+        elif signal["is_google_frontend"] or not signal["behind_cloudflare"]:
+            leaks.append(host)
+            metrics.append(_metric(host, f"NOT via Cloudflare - Server:{signal['server']} HTTP:{signal['http_status']}", "error"))
+        else:
+            cf_ray = "yes" if signal["cf_ray_present"] else "no"
+            metrics.append(_metric(host, f"Cloudflare - CF-RAY:{cf_ray} HTTP:{signal['http_status']}", "ok"))
+
+    direct_host, direct_url = EDGE_ROUTING_DIRECT_HOST
+    direct_signal = _probe_edge_signal(direct_url)
+    total_latency += direct_signal["latency_ms"]
+    if direct_signal["error"]:
+        metrics.append(_metric(direct_host, f"unreachable ({direct_signal['error']})", "neutral"))
+    else:
+        metrics.append(_metric(direct_host, f"Server:{direct_signal['server']} (frontend must not use this host)", "neutral"))
+
+    if leaks:
+        status = "error"
+        summary = f"Sanction-bypass leak: {', '.join(leaks)} is not served through Cloudflare; Iran users without VPN will be blocked."
+    elif unreachable:
+        status = "warn"
+        summary = f"Some edge hosts could not be probed from the console runtime: {', '.join(unreachable)}."
+    else:
+        status = "ok"
+        summary = "All critical Collabra hosts (app, api, db, files) are served through Cloudflare; no direct-Google leak detected."
+
+    return _resource(
+        resource_id="edge-routing-sanction-bypass",
+        group="Edge",
+        name="Edge Routing / Sanction-Bypass",
+        kind="Cloudflare front check",
+        status=status,
+        summary=summary,
+        primary_url="https://app.otmega.com",
+        latency_ms=total_latency,
+        metrics=metrics,
+        links=[
+            _link("App", "https://app.otmega.com"),
+            _link("API", "https://api.otmega.com"),
+            _link("DB proxy", "https://db.otmega.com"),
+            _link("Files proxy", "https://files.otmega.com"),
+        ],
+    )
+
+
 def _static_resources(base_url: str) -> list[dict]:
     cloud_run_console = (
         "https://console.cloud.google.com/run/detail/"
@@ -1300,6 +1471,17 @@ def operational_resources():
                 primary_url="https://dash.cloudflare.com",
                 metrics=[_metric("probe", "skipped", "unknown")],
             ),
+            _resource(
+                resource_id="edge-routing-sanction-bypass",
+                group="Edge",
+                name="Edge Routing / Sanction-Bypass",
+                kind="Cloudflare front check",
+                status="unknown",
+                summary="Live probe is skipped during automated tests.",
+                primary_url="https://app.otmega.com",
+                metrics=[_metric("probe", "skipped", "unknown")],
+            ),
+            _check_transcript_runtime_capacity(),
         ]
         return jsonify(
             {
@@ -1321,6 +1503,8 @@ def operational_resources():
         _check_gcs(),
         _check_files_proxy(),
         _check_collabra_api(),
+        _check_transcript_runtime_capacity(),
+        _check_edge_routing(),
         *_static_resources(base_url),
         _check_firebase_hosting(),
         _check_cloudflare_workers(),

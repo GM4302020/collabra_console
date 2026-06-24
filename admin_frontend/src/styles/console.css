@@ -3382,6 +3382,116 @@ button {
   background: var(--console-panel-soft);
 }
 
+.gcs-audio-context-panel {
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.35rem;
+  padding: 0.65rem 0.85rem;
+}
+
+.gcs-audio-context-panel.muted {
+  align-items: center;
+  color: var(--console-muted);
+  display: flex;
+  font-size: 0.82rem;
+}
+
+.gcs-audio-context-panel.error {
+  background: color-mix(in srgb, var(--console-red) 8%, var(--console-panel));
+  border-color: color-mix(in srgb, var(--console-red) 55%, var(--console-border));
+  color: var(--console-text);
+}
+
+.gcs-audio-context-panel.error span {
+  color: var(--console-muted);
+  font-size: 0.82rem;
+}
+
+.gcs-audio-context-header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.gcs-audio-context-header strong {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.gcs-audio-context-header span {
+  background: var(--console-panel);
+  border: 1px solid var(--console-border);
+  border-radius: 999px;
+  color: var(--console-muted);
+  font-size: 0.72rem;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0.15rem 0.45rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gcs-audio-context-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.gcs-audio-context-card {
+  border: 1px solid var(--console-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+}
+
+.gcs-audio-context-card.source {
+  border-color: color-mix(in srgb, var(--console-accent) 64%, var(--console-border));
+}
+
+.gcs-audio-context-card small,
+.gcs-audio-context-card b {
+  color: var(--console-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.gcs-audio-context-card strong {
+  color: var(--console-accent);
+  font-size: 0.84rem;
+}
+
+.gcs-audio-context-card span,
+.gcs-audio-context-card em {
+  font-size: 0.8rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gcs-audio-context-card em {
+  color: var(--console-muted);
+  font-style: normal;
+}
+
+.gcs-audio-context-note {
+  border-top: 1px solid var(--console-border);
+  color: var(--console-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  margin: 0;
+  padding-top: 0.45rem;
+}
+
 .gcs-transcript-actions {
   display: flex;
   gap: 0.5rem;
@@ -3693,6 +3803,99 @@ button {
   color: var(--console-muted);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.gcs-lip-preview-panel {
+  border-top: 1px solid var(--console-border);
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.25rem;
+  padding-top: 0.65rem;
+}
+
+.gcs-lip-preview-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.gcs-lip-target-input {
+  background: var(--console-panel);
+  border: 1px solid var(--console-border);
+  border-radius: 5px;
+  color: var(--console-text);
+  font-size: 0.82rem;
+  height: 32px;
+  padding: 0 0.55rem;
+  text-transform: lowercase;
+  width: 74px;
+}
+
+.gcs-lip-preview-grid {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.gcs-lip-preview-grid > div {
+  background: var(--console-panel);
+  border: 1px solid var(--console-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+}
+
+.gcs-lip-preview-grid small {
+  color: var(--console-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.gcs-lip-preview-grid strong {
+  color: var(--console-accent);
+  font-size: 0.8rem;
+}
+
+.gcs-lip-preview-grid p {
+  color: var(--console-text);
+  font-size: 0.84rem;
+  line-height: 1.55;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.gcs-lip-preview-meta {
+  color: var(--console-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.74rem;
+}
+
+.gcs-transcript-runtime-advice {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(147, 53, 31, 0.22);
+  color: var(--console-text);
+}
+
+.gcs-transcript-runtime-advice strong {
+  color: #93351f;
+  font-size: 0.84rem;
+}
+
+.gcs-transcript-runtime-advice span {
+  color: var(--console-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 /* ─── Routine Tester Tabs ──────────────────────────────────────────────────── */
