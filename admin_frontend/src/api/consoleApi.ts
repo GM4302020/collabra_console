@@ -937,3 +937,128 @@ export async function sendLiveChunk(audio: Blob, whisperModel: string): Promise<
   if (!response.ok) throw new Error((data as { message?: string }).message ?? `live-chunk failed ${response.status}`);
   return data;
 }
+
+// ─── Gemini Live Translate ───────────────────────────────────────────────────
+
+export type LiveTranslateLanguage = {
+  code: string;
+  label: string;
+};
+
+export type LiveTranslateConfigResponse = {
+  status: string;
+  model: string;
+  model_resource: string;
+  default_target_language_code: string;
+  supported_languages: LiveTranslateLanguage[];
+  input_audio: { mime_type: string; sample_rate_hz: number; channels: number };
+  output_audio: { mime_type: string; sample_rate_hz: number; channels: number };
+  save_prefix: string;
+  auth?: {
+    token_strategy: string;
+    connect_api_version: string;
+    connect_rpc?: string;
+    token_query_param?: string;
+    client_send_gate?: string;
+    setup_shape?: string;
+    token_constraint_mode?: string;
+    reference_direct_api_version: string;
+    api_key_env: string;
+    api_key_configured: boolean;
+    token_timeout_seconds: number;
+    token_expire_seconds: number;
+    new_session_expire_seconds: number;
+  };
+};
+
+export type LiveTranslateSessionTokenResponse = {
+  status: string;
+  access_token: string;
+  model: string;
+  model_resource: string;
+  target_language_code: string;
+  echo_target_language: boolean;
+  expires_in_seconds: number;
+  new_session_expires_in_seconds?: number;
+  expires_at?: string;
+  new_session_expires_at?: string;
+  latency_ms?: number;
+  auth_mode?: string;
+  token_constraint_mode?: string;
+  setup_shape?: string;
+  client_send_gate?: string;
+};
+
+export type LiveTranslateSegmentPayload = {
+  text: string;
+  language_code: string;
+  created_at: string;
+};
+
+export type LiveTranslateSaveResponse = {
+  status: string;
+  bucket: string;
+  session_id: string;
+  prefix: string;
+  saved_paths: string[];
+};
+
+export type LiveTranslateSavedSession = {
+  session_id: string;
+  prefix: string;
+  updated: string | null;
+  size: number | null;
+};
+
+export type LiveTranslateSessionsResponse = {
+  status: string;
+  bucket: string;
+  sessions: LiveTranslateSavedSession[];
+};
+
+export type LiveTranslateSessionDetailResponse = {
+  status: string;
+  bucket: string;
+  session_id: string;
+  prefix: string;
+  session: Record<string, unknown> | null;
+  input_transcript: LiveTranslateSegmentPayload[] | null;
+  output_transcript: LiveTranslateSegmentPayload[] | null;
+  frontend_log: Array<Record<string, unknown>> | null;
+  backend_log: Record<string, unknown> | null;
+  source_audio_url: string | null;
+  target_audio_url: string | null;
+};
+
+export function fetchLiveTranslateConfig(): Promise<LiveTranslateConfigResponse> {
+  return getJson<LiveTranslateConfigResponse>('/api/console/live-translate/config');
+}
+
+export function createLiveTranslateSessionToken(payload: {
+  target_language_code: string;
+  echo_target_language: boolean;
+}): Promise<LiveTranslateSessionTokenResponse> {
+  return postJson<LiveTranslateSessionTokenResponse>('/api/console/live-translate/session-token', payload);
+}
+
+export function saveLiveTranslateSession(payload: {
+  session_id: string;
+  target_language_code: string;
+  source_language_code?: string;
+  echo_target_language: boolean;
+  input_transcript: LiveTranslateSegmentPayload[];
+  output_transcript: LiveTranslateSegmentPayload[];
+  source_audio_wav_base64?: string;
+  target_audio_wav_base64?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<LiveTranslateSaveResponse> {
+  return postJson<LiveTranslateSaveResponse>('/api/console/live-translate/save-session', payload);
+}
+
+export function fetchLiveTranslateSessions(limit = 10): Promise<LiveTranslateSessionsResponse> {
+  return getJson<LiveTranslateSessionsResponse>(`/api/console/live-translate/sessions?limit=${limit}`);
+}
+
+export function fetchLiveTranslateSessionDetail(sessionId: string): Promise<LiveTranslateSessionDetailResponse> {
+  return getJson<LiveTranslateSessionDetailResponse>(`/api/console/live-translate/session/${encodeURIComponent(sessionId)}`);
+}

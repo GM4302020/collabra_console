@@ -17,6 +17,7 @@ READ_ONLY_CAPABILITIES = (
     "console.manage_dashboard_settings",
     "console.view_gcs_browser",
     "console.use_transcript_api",
+    "console.use_live_translate",
     "console.view_supabase_monitor",
 )
 

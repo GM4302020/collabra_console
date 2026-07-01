@@ -10,6 +10,7 @@ from admin_api.config_routes import config_bp
 from admin_api.dashboard_settings_routes import dashboard_settings_bp
 from admin_api.gcs_routes import gcs_bp
 from admin_api.health_routes import health_bp
+from admin_api.live_translate_routes import live_translate_bp
 from admin_api.operational_routes import operational_bp
 from admin_api.session_routes import session_bp
 from admin_api.static_routes import register_static_routes
@@ -33,6 +34,7 @@ def create_app() -> Flask:
     app.register_blueprint(config_bp)
     app.register_blueprint(dashboard_settings_bp)
     app.register_blueprint(gcs_bp)
+    app.register_blueprint(live_translate_bp)
     app.register_blueprint(operational_bp)
     app.register_blueprint(trace_bp)
     app.register_blueprint(audit_bp)

@@ -4,10 +4,12 @@
 import { useState } from 'react';
 import GcsBrowserPanel from '../components/gcs/GcsBrowserPanel';
 import LiveAsrPanel from '../components/live-asr/LiveAsrPanel';
+import LiveTranslatePanel from '../components/live-translate/LiveTranslatePanel';
 
 const TABS = [
   { id: 'gcs', label: 'GCS File Browser' },
   { id: 'live-asr', label: 'Live ASR Streaming' },
+  { id: 'live-translate', label: 'Live Translate' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -46,6 +48,12 @@ export default function RoutineTesterPage() {
       {activeTab === 'live-asr' && (
         <section className="console-panel routine-tester-section">
           <LiveAsrPanel />
+        </section>
+      )}
+
+      {activeTab === 'live-translate' && (
+        <section className="console-panel routine-tester-section">
+          <LiveTranslatePanel />
         </section>
       )}
     </div>
