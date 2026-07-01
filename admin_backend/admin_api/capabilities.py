@@ -17,6 +17,7 @@ READ_ONLY_CAPABILITIES = (
     "console.manage_dashboard_settings",
     "console.view_gcs_browser",
     "console.use_transcript_api",
+    "console.view_supabase_monitor",
 )
 
 
@@ -34,6 +35,7 @@ def capabilities_for_actor(actor) -> list[str]:
             "console.view_operational_status",
             "console.view_user_operations",
             "console.manage_dashboard_settings",
+            "console.view_supabase_monitor",
         ]
     if actor.authenticated:
         return ["console.view_health", "console.view_session"]

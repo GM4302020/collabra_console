@@ -1822,6 +1822,16 @@ button {
   padding: 7px 10px;
 }
 
+.ops-log-filters input {
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  color: var(--console-text);
+  min-height: 36px;
+  min-width: 150px;
+  padding: 7px 10px;
+}
+
 .ops-log-summary {
   display: grid;
   gap: 14px;
@@ -1847,6 +1857,99 @@ button {
 
 .ops-log-history-head small {
   color: var(--console-muted);
+}
+
+.console-section-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.console-section-toolbar > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.console-table-wrap {
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  max-height: 560px;
+  overflow: auto;
+}
+
+.console-data-table {
+  border-collapse: collapse;
+  min-width: 100%;
+}
+
+.console-data-table th,
+.console-data-table td {
+  border-bottom: 1px solid var(--console-border);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.console-data-table th {
+  background: var(--console-panel-soft);
+  color: var(--console-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.console-data-table td {
+  font-size: 13px;
+  max-width: 420px;
+}
+
+.console-data-table td small {
+  color: var(--console-muted);
+  display: block;
+  margin-top: 3px;
+}
+
+.supabase-panel-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.supabase-checklist {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.supabase-column-toggles {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 122px;
+  overflow: auto;
+}
+
+.supabase-column-toggles label {
+  align-items: center;
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 8px;
+  display: inline-flex;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 9px;
+}
+
+.supabase-field-value {
+  color: var(--console-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+  max-height: 180px;
+  min-width: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
 }
 
 .ops-log-table {

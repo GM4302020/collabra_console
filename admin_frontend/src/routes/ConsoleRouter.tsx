@@ -10,11 +10,12 @@ const FirebaseHostingPage = lazy(() => import('../pages/FirebaseHostingPage'));
 const OperationalLogsPage = lazy(() => import('../pages/OperationalLogsPage'));
 const RoutineTesterPage = lazy(() => import('../pages/RoutineTesterPage'));
 const RuntimeSettingsPage = lazy(() => import('../pages/RuntimeSettingsPage'));
+const SupabaseMonitorPage = lazy(() => import('../pages/SupabaseMonitorPage'));
 const TraceViewerPage = lazy(() => import('../pages/TraceViewerPage'));
 const UiTextsMatrixPage = lazy(() => import('../pages/UiTextsMatrixPage'));
 const UserOperationsPage = lazy(() => import('../pages/UserOperationsPage'));
 
-export type ConsoleTab = 'dashboard' | 'runtime' | 'users' | 'hosting' | 'logs' | 'traces' | 'uiTexts' | 'routineTester';
+export type ConsoleTab = 'dashboard' | 'runtime' | 'users' | 'hosting' | 'logs' | 'traces' | 'uiTexts' | 'routineTester' | 'supabase';
 
 type ConsoleRouterProps = {
   bootstrap: ConsoleBootstrap;
@@ -40,6 +41,8 @@ export default function ConsoleRouter({ bootstrap, onLogout, onRelogin }: Consol
       <OperationalLogsPage />
     ) : activeTab === 'routineTester' ? (
       <RoutineTesterPage />
+    ) : activeTab === 'supabase' ? (
+      <SupabaseMonitorPage />
     ) : (
       <DashboardPage bootstrap={bootstrap} />
     );

@@ -161,6 +161,87 @@ export type CloudRunLogsResponse = {
 
 export type OperationalLogSource = 'cloud-run-console' | 'cloud-build';
 
+export type SupabaseStatusIncident = {
+  name?: string;
+  status?: string;
+  impact?: string;
+  shortlink?: string;
+  updated_at?: string;
+};
+
+export type SupabaseStatusResponse = {
+  status: string;
+  http_status?: number;
+  latency_ms?: number;
+  indicator?: string | null;
+  description?: string | null;
+  incidents: SupabaseStatusIncident[];
+  scheduled_maintenances: SupabaseStatusIncident[];
+  checked_at: string;
+  source_url: string;
+  message?: string;
+};
+
+export type SupabaseOverviewTable = {
+  name: string;
+  status: 'ok' | 'warn' | 'error';
+  http_status: number | null;
+  latency_ms: number | null;
+  row_count: number | null;
+  content_range: string | null;
+  notes: string;
+  documented_field_count: number;
+  documented_fields: string[];
+  documented_indexes: string[];
+};
+
+export type SupabaseDatabaseOverviewResponse = {
+  status: 'ok' | 'warn' | 'error';
+  project: {
+    url: string;
+    project_id: string;
+    dashboard_url: string | null;
+    advisor_id: number;
+  };
+  tables: SupabaseOverviewTable[];
+  checklist: string[];
+  errors: string[];
+  latency_ms: number;
+  checked_at: string;
+};
+
+export type SupabaseLipWf1AuditRow = {
+  created_at: string | null;
+  message_id: string;
+  conversation_id: string;
+  sender: { user_id: string; email: string | null; full_name: string | null };
+  recipients: Array<{ user_id: string | null; email: string | null; full_name: string | null; target_lang: string | null; target_lang_source?: string | null; target_index: number }>;
+  source_lang: string | null;
+  target_langs: string[];
+  data_kind: string;
+  status: string | null;
+  content_original: string | null;
+  content_pivot: string | null;
+  text_translations: Record<string, string> | null;
+  requested_model: string | null;
+  actual_model: string | null;
+  requested_provider: string | null;
+  actual_provider: string | null;
+  used_fallback: boolean | null;
+  selection_reason: string | null;
+  language_phase: string | null;
+  raw_fields: Record<string, unknown>;
+};
+
+export type SupabaseLipWf1AuditResponse = {
+  status: string;
+  http_status: number;
+  latency_ms: number;
+  filters: Record<string, string | number | null>;
+  rows: SupabaseLipWf1AuditRow[];
+  checked_at: string;
+};
+
 export type UserOpsBannerTarget = {
   user_id: string;
   email: string | null;
@@ -458,6 +539,31 @@ export function fetchOperationalLogs(params: { source: OperationalLogSource; hou
     source: params.source,
   });
   return getJson<CloudRunLogsResponse>(`/api/console/operations/logs?${query.toString()}`);
+}
+
+export function fetchSupabaseStatus(): Promise<SupabaseStatusResponse> {
+  return getJson<SupabaseStatusResponse>('/api/console/supabase/status');
+}
+
+export function fetchSupabaseDatabaseOverview(): Promise<SupabaseDatabaseOverviewResponse> {
+  return getJson<SupabaseDatabaseOverviewResponse>('/api/console/supabase/database-overview');
+}
+
+export function fetchSupabaseLipWf1Audit(params: {
+  advisor_id: number;
+  limit: number;
+  conversation_id?: string;
+  created_at_from?: string;
+  created_at_to?: string;
+}): Promise<SupabaseLipWf1AuditResponse> {
+  const query = new URLSearchParams({
+    advisor_id: String(params.advisor_id),
+    limit: String(params.limit),
+  });
+  if (params.conversation_id) query.set('conversation_id', params.conversation_id);
+  if (params.created_at_from) query.set('created_at_from', params.created_at_from);
+  if (params.created_at_to) query.set('created_at_to', params.created_at_to);
+  return getJson<SupabaseLipWf1AuditResponse>(`/api/console/supabase/lip-wf1-audit?${query.toString()}`);
 }
 
 export function fetchCloudRunLogs(params: { hours: number; severity: string; limit: number }): Promise<CloudRunLogsResponse> {

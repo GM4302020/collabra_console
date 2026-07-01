@@ -9,7 +9,15 @@ This folder contains the web-only Admin Console control plane for Collabra.
 - `admin_backend/`: Flask/Gunicorn API and static shell host for Cloud Run.
 - `admin_deploy/`: PowerShell deployment helpers.
 
-The current milestone is production-safe with tightly scoped User Zero writes for the UI Texts Matrix. It exposes health, session, real MUPO profile lookup, runtime inventory, operational probes, Trace Viewer sandbox/workbench, audit placeholder surfaces, AI-assisted UI text suggestions, manual SQL/Python exports, and controlled direct apply for UI text language payloads.
+The current milestone is production-safe with tightly scoped User Zero writes for the UI Texts Matrix. It exposes health, session, real MUPO profile lookup, runtime inventory, operational probes, Supabase Monitor, Trace Viewer sandbox/workbench, audit placeholder surfaces, AI-assisted UI text suggestions, manual SQL/Python exports, and controlled direct apply for UI text language payloads.
+
+Supabase Monitor:
+
+- Menu: `Supabase Monitor`
+- Capability: `console.view_supabase_monitor`
+- Backend routes: `GET /api/console/supabase/status`, `GET /api/console/supabase/database-overview`, `GET /api/console/supabase/lip-wf1-audit`
+- Behavior: read-only status/overview/audit surface; no database write, repair, migration, or DDL.
+- UI settings: saved through the existing dashboard settings file at `advisors/collabra-20018-v1.0.0/main-data/admin-console-dashboard-settings.json`.
 
 Official Cloud Run deployment from PowerShell. This is the supported validation path for the console; do not use a local dev server for acceptance checks.
 
@@ -50,6 +58,7 @@ console/
 |   |   |-- profile_adapter.py
 |   |   |-- session_routes.py
 |   |   |-- static_routes.py
+|   |   |-- supabase_monitor_routes.py
 |   |   `-- trace_routes.py
 |   `-- tests/
 |       |-- test_health.py
@@ -87,6 +96,7 @@ console/
         |-- pages/
         |   |-- DashboardPage.tsx
         |   |-- RuntimeSettingsPage.tsx
+        |   |-- SupabaseMonitorPage.tsx
         |   |-- TraceViewerPage.tsx
         |   `-- UiTextsMatrixPage.tsx
         |-- routes/

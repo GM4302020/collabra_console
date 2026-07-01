@@ -204,6 +204,49 @@ def _first_metadata_lang(metadata: object, keys: tuple[str, ...]) -> tuple[str |
     return None, None
 
 
+def _message_language_context(metadata: object) -> dict | None:
+    if not isinstance(metadata, dict):
+        return None
+    for key in ("message_language_context", "voice_language_context", "language_context"):
+        context = metadata.get(key)
+        if isinstance(context, dict):
+            return context
+    return None
+
+
+def _context_source_lang(metadata: object) -> tuple[str | None, str | None]:
+    context = _message_language_context(metadata)
+    if not context:
+        return None, None
+    value = _lang_label(context.get("source_lang"))
+    return (value, "metadata.message_language_context.source_lang") if value else (None, None)
+
+
+def _context_target_lang(metadata: object, user_id: str | None, index: int) -> tuple[str | None, str | None]:
+    context = _message_language_context(metadata)
+    if not context:
+        return None, None
+    targets = context.get("targets")
+    if isinstance(targets, list):
+        for target in targets:
+            if not isinstance(target, dict):
+                continue
+            if user_id and str(target.get("user_id") or "") == str(user_id):
+                value = _lang_label(target.get("target_lang"))
+                if value:
+                    return value, "metadata.message_language_context.targets"
+        if index < len(targets) and isinstance(targets[index], dict):
+            value = _lang_label(targets[index].get("target_lang"))
+            if value:
+                return value, "metadata.message_language_context.targets"
+    target_langs = context.get("target_langs")
+    if isinstance(target_langs, list) and index < len(target_langs):
+        value = _lang_label(target_langs[index])
+        if value:
+            return value, "metadata.message_language_context.target_langs"
+    return None, None
+
+
 def _translation_langs(message: dict) -> list[str]:
     translations = message.get("text_translations")
     if not isinstance(translations, dict):
@@ -248,6 +291,8 @@ def _build_audio_context(blob_name: str) -> dict:
     source_lang = _lang_label(message.get("src_lang"))
     source_lang_source = "messages.src_lang" if source_lang else None
     if not source_lang:
+        source_lang, source_lang_source = _context_source_lang(metadata)
+    if not source_lang:
         source_lang, source_lang_source = _first_metadata_lang(metadata, ("src_lang", "source_lang", "detected_src_lang"))
     if not source_lang:
         sender_profile = profiles.get(sender_id)
@@ -267,7 +312,11 @@ def _build_audio_context(blob_name: str) -> dict:
         profile = profiles.get(user_id, {})
         lang = None
         lang_source = None
-        if metadata_destination_lang:
+        context_lang, context_lang_source = _context_target_lang(metadata, user_id, index)
+        if context_lang:
+            lang = context_lang
+            lang_source = context_lang_source
+        elif metadata_destination_lang:
             lang = metadata_destination_lang
             lang_source = metadata_destination_source
         elif index < len(translation_langs):
