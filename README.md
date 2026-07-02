@@ -25,6 +25,11 @@ Routine Tester Live Translate:
 - Capability: `console.use_live_translate`
 - Backend routes: `GET /api/console/live-translate/config`, `POST /api/console/live-translate/session-token`, `POST /api/console/live-translate/save-session`
 - Behavior: browser microphone streams PCM audio to Gemini Live API with an ephemeral token issued by console backend; input/output transcripts and source/target WAV files can be saved to GCS.
+- Runtime controls: target language list follows the official 70+ Live Translate languages; chunk duration, stop drain, VAD sensitivity, silence, prefix padding, activity handling, turn coverage, transcript toggles, target language, and echo mode are adjustable in the tab and persisted in browser settings. `Default settings` restores the current baseline values.
+- Target language picker: languages are displayed in English alphabetical order; search typing filters/jumps the list while keeping the select list available. The last manually selected target language is persisted and is not overwritten by refresh or saved-session restore.
+- Settings profiles: current runtime settings can be saved/loaded as `General`, `iOS`, `Android`, `Windows`, `macOS`, `Linux`, or `Other OS`; saved sessions include the profile key/label when a stored profile was active.
+- Workspace restore: the tab persists its last session id, active profile, and runtime settings in the shared dashboard settings section `live_translate`; saved-session audio can play from signed URLs or inline base64 fallback.
+- Waiting/cost UI: token/setup/drain/save/load states show spinner, timer, and color pulse; usage metadata is converted into token and duration cost estimates using the current Google paid-tier Live Translate prices.
 - WebSocket diagnostics: saved sessions include `frontend_log.json` and `backend_log.json`; the UI shows queued/sent/server-message counts and can decode string/blob/array-buffer server payloads.
 - GCS save prefix: `advisors/collabra-20018-v1.0.0/main-data/live-translate-sessions/`.
 - External dependency: `GEMINI_API_KEY_25` or `GEMINI_API_KEY` with access to `gemini-3.5-live-translate-preview`.

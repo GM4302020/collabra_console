@@ -953,6 +953,18 @@ export type LiveTranslateConfigResponse = {
   supported_languages: LiveTranslateLanguage[];
   input_audio: { mime_type: string; sample_rate_hz: number; channels: number };
   output_audio: { mime_type: string; sample_rate_hz: number; channels: number };
+  runtime_controls?: {
+    audio_chunk_ms?: { default: number; min: number; max: number; step: number };
+    response_drain_ms?: { default: number; min: number; max: number; step: number };
+    silence_duration_ms?: { default: number; min: number; max: number; step: number };
+    prefix_padding_ms?: { default: number; min: number; max: number; step: number };
+    start_sensitivity?: string[];
+    end_sensitivity?: string[];
+    activity_handling?: string[];
+    turn_coverage?: string[];
+    transcription?: string[];
+    fixed?: Record<string, unknown>;
+  };
   save_prefix: string;
   auth?: {
     token_strategy: string;
@@ -1028,6 +1040,10 @@ export type LiveTranslateSessionDetailResponse = {
   backend_log: Record<string, unknown> | null;
   source_audio_url: string | null;
   target_audio_url: string | null;
+  source_audio_base64?: string | null;
+  target_audio_base64?: string | null;
+  source_audio_mime_type?: string | null;
+  target_audio_mime_type?: string | null;
 };
 
 export function fetchLiveTranslateConfig(): Promise<LiveTranslateConfigResponse> {

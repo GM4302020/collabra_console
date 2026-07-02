@@ -25,25 +25,90 @@ TOKEN_TIMEOUT_SECONDS = int(os.environ.get("LIVE_TRANSLATE_TOKEN_TIMEOUT_SECONDS
 TOKEN_EXPIRE_SECONDS = int(os.environ.get("LIVE_TRANSLATE_TOKEN_EXPIRE_SECONDS", "1800"))
 TOKEN_NEW_SESSION_EXPIRE_SECONDS = int(os.environ.get("LIVE_TRANSLATE_NEW_SESSION_EXPIRE_SECONDS", "300"))
 TOKEN_CONSTRAINT_MODE = "ephemeral_unlocked_setup"
+INLINE_AUDIO_MAX_BYTES = int(os.environ.get("LIVE_TRANSLATE_INLINE_AUDIO_MAX_BYTES", "8000000"))
 
 SUPPORTED_LANGUAGES = [
-    {"code": "en", "label": "English"},
-    {"code": "fa", "label": "فارسی"},
-    {"code": "tr", "label": "Türkçe"},
+    {"code": "af", "label": "Afrikaans"},
+    {"code": "ak", "label": "Akan"},
+    {"code": "sq", "label": "Albanian"},
+    {"code": "am", "label": "Amharic"},
     {"code": "ar", "label": "العربية"},
-    {"code": "de", "label": "Deutsch"},
+    {"code": "hy", "label": "Armenian"},
+    {"code": "az", "label": "Azerbaijani"},
+    {"code": "eu", "label": "Basque"},
+    {"code": "be", "label": "Belarusian"},
+    {"code": "bn", "label": "Bengali"},
+    {"code": "bg", "label": "Bulgarian"},
+    {"code": "my", "label": "Burmese (Myanmar)"},
+    {"code": "ca", "label": "Catalan"},
+    {"code": "zh-Hans", "label": "Chinese (Simplified)"},
+    {"code": "zh-Hant", "label": "Chinese (Traditional)"},
+    {"code": "hr", "label": "Croatian"},
+    {"code": "cs", "label": "Czech"},
+    {"code": "da", "label": "Danish"},
+    {"code": "nl", "label": "Dutch"},
+    {"code": "en", "label": "English"},
+    {"code": "et", "label": "Estonian"},
+    {"code": "fil", "label": "Filipino"},
+    {"code": "fi", "label": "Finnish"},
     {"code": "fr", "label": "Français"},
-    {"code": "es", "label": "Español"},
-    {"code": "it", "label": "Italiano"},
-    {"code": "pt", "label": "Português"},
-    {"code": "ru", "label": "Русский"},
+    {"code": "gl", "label": "Galician"},
+    {"code": "ka", "label": "Georgian"},
+    {"code": "de", "label": "Deutsch"},
+    {"code": "el", "label": "Greek"},
+    {"code": "gu", "label": "Gujarati"},
+    {"code": "ha", "label": "Hausa"},
+    {"code": "he", "label": "Hebrew"},
     {"code": "hi", "label": "हिन्दी"},
-    {"code": "ur", "label": "اردو"},
-    {"code": "zh", "label": "中文"},
+    {"code": "hu", "label": "Hungarian"},
+    {"code": "is", "label": "Icelandic"},
+    {"code": "id", "label": "Indonesian"},
+    {"code": "it", "label": "Italiano"},
     {"code": "ja", "label": "日本語"},
+    {"code": "jv", "label": "Javanese"},
+    {"code": "kn", "label": "Kannada"},
+    {"code": "kk", "label": "Kazakh"},
+    {"code": "km", "label": "Khmer"},
+    {"code": "rw", "label": "Kinyarwanda"},
     {"code": "ko", "label": "한국어"},
+    {"code": "lo", "label": "Lao"},
+    {"code": "lv", "label": "Latvian"},
+    {"code": "lt", "label": "Lithuanian"},
+    {"code": "mk", "label": "Macedonian"},
+    {"code": "ms", "label": "Malay"},
+    {"code": "ml", "label": "Malayalam"},
+    {"code": "mr", "label": "Marathi"},
+    {"code": "mn", "label": "Mongolian"},
+    {"code": "ne", "label": "Nepali"},
+    {"code": "no", "label": "Norwegian"},
+    {"code": "nb", "label": "Norwegian Bokmal"},
+    {"code": "fa", "label": "فارسی"},
+    {"code": "pl", "label": "Polski"},
+    {"code": "pt-BR", "label": "Portuguese (Brazil)"},
+    {"code": "pt-PT", "label": "Portuguese (Portugal)"},
+    {"code": "pa", "label": "Punjabi"},
+    {"code": "ro", "label": "Romanian"},
+    {"code": "ru", "label": "Русский"},
+    {"code": "sr", "label": "Serbian"},
+    {"code": "sd", "label": "Sindhi"},
+    {"code": "si", "label": "Sinhala"},
+    {"code": "sk", "label": "Slovak"},
+    {"code": "sl", "label": "Slovenian"},
+    {"code": "es", "label": "Español"},
+    {"code": "su", "label": "Sundanese"},
+    {"code": "sw", "label": "Swahili"},
+    {"code": "sv", "label": "Swedish"},
+    {"code": "ta", "label": "Tamil"},
+    {"code": "te", "label": "Telugu"},
+    {"code": "th", "label": "Thai"},
+    {"code": "tr", "label": "Türkçe"},
+    {"code": "uk", "label": "Ukrainian"},
+    {"code": "ur", "label": "اردو"},
+    {"code": "uz", "label": "Uzbek"},
+    {"code": "vi", "label": "Vietnamese"},
+    {"code": "zu", "label": "Zulu"},
 ]
-SUPPORTED_LANGUAGE_CODES = {item["code"] for item in SUPPORTED_LANGUAGES}
+SUPPORTED_LANGUAGE_CODES = {item["code"].lower(): item["code"] for item in SUPPORTED_LANGUAGES}
 
 
 def _now_iso() -> str:
@@ -52,7 +117,7 @@ def _now_iso() -> str:
 
 def _safe_language(value: object, default: str = "en") -> str:
     code = str(value or "").strip().lower()
-    return code if code in SUPPORTED_LANGUAGE_CODES else default
+    return SUPPORTED_LANGUAGE_CODES.get(code, default)
 
 
 def _safe_session_id(value: object) -> str:
@@ -147,11 +212,29 @@ def _signed_url(bucket, path: str) -> str | None:
     blob = bucket.blob(path)
     if not blob.exists():
         return None
-    return blob.generate_signed_url(
+    signed_url = blob.generate_signed_url(
         version="v4",
         expiration=timedelta(hours=1),
         method="GET",
     )
+    return signed_url.replace("storage.googleapis.com", "files.otmega.com")
+
+
+def _audio_blob_payload(bucket, path: str) -> dict:
+    blob = bucket.blob(path)
+    if not blob.exists():
+        return {"url": None, "base64": None, "mime_type": None}
+    signed_url = _signed_url(bucket, path)
+    if blob.size is None:
+        blob.reload()
+    if blob.size is not None and blob.size > INLINE_AUDIO_MAX_BYTES:
+        return {"url": signed_url, "base64": None, "mime_type": blob.content_type or "audio/wav"}
+    data = blob.download_as_bytes()
+    return {
+        "url": signed_url,
+        "base64": base64.b64encode(data).decode("ascii"),
+        "mime_type": blob.content_type or "audio/wav",
+    }
 
 
 @live_translate_bp.get("/api/console/live-translate/config")
@@ -166,6 +249,18 @@ def live_translate_config():
             "supported_languages": SUPPORTED_LANGUAGES,
             "input_audio": {"mime_type": "audio/pcm", "sample_rate_hz": 16000, "channels": 1},
             "output_audio": {"mime_type": "audio/pcm", "sample_rate_hz": 24000, "channels": 1},
+            "runtime_controls": {
+                "audio_chunk_ms": {"default": 250, "min": 100, "max": 500, "step": 50},
+                "response_drain_ms": {"default": 6000, "min": 3000, "max": 12000, "step": 500},
+                "silence_duration_ms": {"default": 900, "min": 300, "max": 2000, "step": 100},
+                "prefix_padding_ms": {"default": 250, "min": 0, "max": 1000, "step": 50},
+                "start_sensitivity": ["START_SENSITIVITY_HIGH", "START_SENSITIVITY_LOW"],
+                "end_sensitivity": ["END_SENSITIVITY_HIGH", "END_SENSITIVITY_LOW"],
+                "activity_handling": ["START_OF_ACTIVITY_INTERRUPTS", "NO_INTERRUPTION"],
+                "turn_coverage": ["TURN_INCLUDES_ONLY_ACTIVITY", "TURN_INCLUDES_ALL_INPUT"],
+                "transcription": ["inputAudioTranscription", "outputAudioTranscription"],
+                "fixed": {"response_modalities": ["AUDIO"], "input_sample_rate_hz": 16000, "output_sample_rate_hz": 24000},
+            },
             "save_prefix": SESSION_PREFIX,
             "auth": {
                 "token_strategy": "ephemeral_v1alpha",
@@ -224,6 +319,8 @@ def live_translate_session_detail(session_id: str):
     try:
         client = _storage_client()
         bucket = client.bucket(BUCKET_NAME)
+        source_audio = _audio_blob_payload(bucket, f"{prefix}/source.wav")
+        target_audio = _audio_blob_payload(bucket, f"{prefix}/target.wav")
         return jsonify(
             {
                 "status": "ok",
@@ -235,8 +332,12 @@ def live_translate_session_detail(session_id: str):
                 "output_transcript": _read_json_blob(bucket, f"{prefix}/output_transcript.json"),
                 "frontend_log": _read_json_blob(bucket, f"{prefix}/frontend_log.json"),
                 "backend_log": _read_json_blob(bucket, f"{prefix}/backend_log.json"),
-                "source_audio_url": _signed_url(bucket, f"{prefix}/source.wav"),
-                "target_audio_url": _signed_url(bucket, f"{prefix}/target.wav"),
+                "source_audio_url": source_audio["url"],
+                "target_audio_url": target_audio["url"],
+                "source_audio_base64": source_audio["base64"],
+                "target_audio_base64": target_audio["base64"],
+                "source_audio_mime_type": source_audio["mime_type"],
+                "target_audio_mime_type": target_audio["mime_type"],
             }
         )
     except Exception as exc:

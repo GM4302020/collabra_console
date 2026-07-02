@@ -4563,6 +4563,34 @@ button {
   gap: 0.7rem;
 }
 
+.live-translate-language-picker {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  min-width: min(100%, 420px);
+}
+
+.live-translate-language-picker input[type="search"] {
+  background: var(--console-bg);
+  border: 1px solid color-mix(in srgb, var(--console-green), var(--console-border) 35%);
+  border-radius: 6px;
+  box-shadow: 0 3px 10px rgba(32, 184, 109, 0.08);
+  color: var(--console-text);
+  min-height: 36px;
+  min-width: 180px;
+  padding: 0 0.6rem;
+}
+
+.live-translate-language-picker input[type="search"]:disabled {
+  border-color: color-mix(in srgb, var(--console-warn), var(--console-border) 35%);
+  opacity: 0.68;
+}
+
+.live-translate-language-picker .gcs-transcript-llm-select {
+  min-width: 210px;
+}
+
 .live-translate-check {
   align-items: center;
   color: var(--console-muted);
@@ -4585,6 +4613,178 @@ button {
   border-radius: 4px;
   color: var(--console-text);
   padding: 0.12rem 0.4rem;
+}
+
+.live-translate-settings-panel {
+  background: var(--console-panel-soft);
+  border: 1px solid color-mix(in srgb, var(--console-green), var(--console-border) 35%);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(32, 184, 109, 0.12), 0 10px 22px rgba(32, 184, 109, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.7rem;
+}
+
+.live-translate-settings-panel.locked {
+  border-color: color-mix(in srgb, var(--console-warn), var(--console-border) 35%);
+  box-shadow: 0 0 0 1px rgba(211, 145, 32, 0.16), 0 10px 22px rgba(211, 145, 32, 0.08);
+}
+
+.live-translate-settings-head {
+  align-items: center;
+  display: flex;
+  gap: 0.8rem;
+  justify-content: space-between;
+}
+
+.live-translate-settings-head > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.live-translate-settings-head strong {
+  color: var(--console-text);
+  font-size: 0.9rem;
+}
+
+.live-translate-settings-head span {
+  color: var(--console-muted);
+  font-size: 0.76rem;
+}
+
+.live-translate-profile-row {
+  align-items: center;
+  background: var(--console-panel);
+  border: 1px solid rgba(32, 184, 109, 0.42);
+  border-radius: 7px;
+  box-shadow: 0 4px 12px rgba(32, 184, 109, 0.08);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  padding: 0.55rem;
+}
+
+.live-translate-settings-panel.locked .live-translate-profile-row {
+  border-color: rgba(211, 145, 32, 0.45);
+  box-shadow: 0 4px 12px rgba(211, 145, 32, 0.08);
+}
+
+.live-translate-profile-row label {
+  align-items: center;
+  color: var(--console-muted);
+  display: inline-flex;
+  font-size: 0.76rem;
+  gap: 0.4rem;
+  position: relative;
+}
+
+.live-translate-profile-row select {
+  background: var(--console-bg);
+  border: 1px solid var(--console-border);
+  border-radius: 6px;
+  color: var(--console-text);
+  min-height: 30px;
+  padding: 0 0.45rem;
+}
+
+.live-translate-profile-saves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.live-translate-profile-row small {
+  color: var(--console-muted);
+  font-size: 0.74rem;
+}
+
+.live-translate-settings-grid {
+  border-radius: 8px;
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.live-translate-settings-grid label {
+  align-items: center;
+  background: var(--console-panel);
+  border: 1px solid rgba(32, 184, 109, 0.48);
+  border-radius: 7px;
+  box-shadow: 0 4px 12px rgba(32, 184, 109, 0.08);
+  color: var(--console-muted);
+  display: grid;
+  font-size: 0.76rem;
+  gap: 0.35rem;
+  grid-template-columns: minmax(62px, auto) minmax(0, 1fr) auto;
+  min-width: 0;
+  padding: 0.5rem;
+  position: relative;
+}
+
+.live-translate-settings-panel.locked .live-translate-settings-grid label {
+  border-color: rgba(211, 145, 32, 0.45);
+  box-shadow: 0 4px 12px rgba(211, 145, 32, 0.08);
+}
+
+.live-translate-setting-tip::after {
+  background: var(--console-text);
+  border: 1px solid var(--console-border);
+  border-radius: 6px;
+  bottom: calc(100% + 8px);
+  box-shadow: 0 8px 20px var(--console-shadow);
+  color: var(--console-panel);
+  content: attr(data-tip);
+  font-size: 0.72rem;
+  left: 50%;
+  line-height: 1.35;
+  max-width: min(280px, calc(100vw - 40px));
+  opacity: 0;
+  padding: 0.45rem 0.55rem;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-50%) translateY(4px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  width: max-content;
+  z-index: 20;
+}
+
+.live-translate-setting-tip:hover::after,
+.live-translate-setting-tip:focus-within::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.live-translate-settings-grid label:has(select),
+.live-translate-settings-grid label:has(input[type="checkbox"]) {
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+}
+
+.live-translate-settings-grid input[type="range"] {
+  width: 100%;
+}
+
+.live-translate-settings-grid input[type="checkbox"] {
+  height: 16px;
+  justify-self: start;
+  width: 16px;
+}
+
+.live-translate-settings-grid select {
+  background: var(--console-bg);
+  border: 1px solid var(--console-border);
+  border-radius: 6px;
+  color: var(--console-text);
+  min-height: 30px;
+  min-width: 0;
+  padding: 0 0.45rem;
+}
+
+.live-translate-settings-grid b {
+  color: var(--console-text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .live-translate-primary,
@@ -4614,6 +4814,97 @@ button {
 .live-translate-stop:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.live-translate-wait {
+  align-items: center;
+  background: var(--console-panel);
+  border: 1px solid var(--console-warn);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(211, 145, 32, 0.16), 0 12px 24px rgba(211, 145, 32, 0.1);
+  color: var(--console-text);
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  padding: 0.65rem 0.8rem;
+  position: relative;
+}
+
+.live-translate-wait::after {
+  animation: liveTranslatePulse 1.2s ease-in-out infinite;
+  background: var(--console-warn);
+  bottom: 0;
+  content: "";
+  height: 3px;
+  left: 0;
+  opacity: 0.7;
+  position: absolute;
+  width: 100%;
+}
+
+.live-translate-wait i {
+  background: currentColor;
+  bottom: 0;
+  height: 3px;
+  left: 0;
+  opacity: 0.92;
+  position: absolute;
+}
+
+.live-translate-wait-info {
+  border-color: var(--console-green);
+  box-shadow: 0 0 0 1px rgba(32, 184, 109, 0.16), 0 12px 24px rgba(32, 184, 109, 0.1);
+  color: var(--console-green);
+}
+
+.live-translate-wait-warning {
+  border-color: var(--console-warn);
+  color: var(--console-warn);
+}
+
+.live-translate-wait-danger {
+  border-color: var(--console-red);
+  box-shadow: 0 0 0 1px rgba(214, 76, 54, 0.16), 0 12px 24px rgba(214, 76, 54, 0.1);
+  color: var(--console-red);
+}
+
+.live-translate-wait > div {
+  color: var(--console-text);
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.live-translate-wait strong {
+  font-size: 0.86rem;
+}
+
+.live-translate-wait span {
+  color: var(--console-muted);
+  font-size: 0.76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-translate-wait b {
+  font-size: 0.82rem;
+  min-width: 2.4rem;
+  text-align: right;
+}
+
+.live-translate-spinner {
+  animation: liveTranslateSpin 0.8s linear infinite;
+}
+
+@keyframes liveTranslateSpin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes liveTranslatePulse {
+  0%, 100% { opacity: 0.22; }
+  50% { opacity: 0.85; }
 }
 
 .live-translate-columns {
@@ -4692,9 +4983,43 @@ button {
 }
 
 .live-translate-monitor {
+  border: 1px solid var(--console-green);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(32, 184, 109, 0.1);
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
+  padding: 0.55rem;
+}
+
+.live-translate-boundary {
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--console-green), var(--console-border) 30%);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(32, 184, 109, 0.1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.5rem;
+}
+
+.live-translate-boundary span {
+  background: var(--console-panel-soft);
+  border: 1px solid var(--console-border);
+  border-radius: 5px;
+  color: var(--console-muted);
+  font-size: 0.74rem;
+  padding: 0.2rem 0.45rem;
+}
+
+.live-translate-monitor-warning {
+  border-color: var(--console-warn);
+  box-shadow: 0 0 0 1px rgba(211, 145, 32, 0.12);
+}
+
+.live-translate-monitor-danger {
+  border-color: var(--console-red);
+  box-shadow: 0 0 0 1px rgba(214, 76, 54, 0.12);
 }
 
 .live-translate-monitor span {
@@ -4704,6 +5029,36 @@ button {
   color: var(--console-muted);
   font-size: 0.74rem;
   padding: 0.2rem 0.45rem;
+}
+
+.live-translate-cost-panel {
+  align-items: center;
+  background: var(--console-panel-soft);
+  border: 1px solid color-mix(in srgb, var(--console-green), var(--console-border) 30%);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(32, 184, 109, 0.1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.55rem;
+}
+
+.live-translate-cost-panel strong,
+.live-translate-cost-panel span,
+.live-translate-cost-panel small {
+  border: 1px solid var(--console-border);
+  border-radius: 5px;
+  color: var(--console-muted);
+  font-size: 0.74rem;
+  padding: 0.2rem 0.45rem;
+}
+
+.live-translate-cost-panel strong {
+  color: var(--console-text);
+}
+
+.live-translate-cost-panel small {
+  flex-basis: 100%;
 }
 
 .live-translate-usage {

@@ -139,12 +139,19 @@ def test_live_translate_sessions_and_detail(monkeypatch):
             self._payload = payload
             self.updated = type("FakeDate", (), {"isoformat": lambda self: updated})()
             self.size = size
+            self.content_type = "audio/wav" if name.endswith(".wav") else "application/json"
 
         def exists(self):
             return self._payload is not None or self.name.endswith(".wav")
 
         def download_as_text(self, encoding="utf-8"):
             return json.dumps(self._payload)
+
+        def download_as_bytes(self):
+            return b"RIFFtest"
+
+        def reload(self):
+            return None
 
         def generate_signed_url(self, version, expiration, method):
             return f"https://signed.example/{self.name}"
@@ -186,3 +193,5 @@ def test_live_translate_sessions_and_detail(monkeypatch):
     assert detail_payload["frontend_log"][0]["event"] == "client"
     assert detail_payload["backend_log"]["event"] == "backend"
     assert detail_payload["source_audio_url"].startswith("https://signed.example/")
+    assert detail_payload["source_audio_base64"]
+    assert detail_payload["source_audio_mime_type"] == "audio/wav"
