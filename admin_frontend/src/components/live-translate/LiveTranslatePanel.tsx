@@ -4,12 +4,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, Mic, Play, RotateCcw, Save, Square, Volume2 } from 'lucide-react';
 import {
+  createElevenLabsVoiceProfile,
   fetchConsoleDashboardSettings,
   createLiveTranslateSessionToken,
   fetchLiveTranslateSessionDetail,
   fetchLiveTranslateSessions,
   fetchLiveTranslateConfig,
+  executeLiveTranslateClone,
+  runLiveTranslateClonePreflight,
+  prepareLiveTranslateClonePlan,
+  LiveTranslateCloneExecuteResponse,
   LiveTranslateConfigResponse,
+  LiveTranslateClonePlanResponse,
+  LiveTranslateClonePreflightResponse,
   LiveTranslateSaveResponse,
   LiveTranslateSavedSession,
   LiveTranslateSessionDetailResponse,
@@ -41,6 +48,9 @@ type StartSensitivity = 'START_SENSITIVITY_HIGH' | 'START_SENSITIVITY_LOW';
 type EndSensitivity = 'END_SENSITIVITY_HIGH' | 'END_SENSITIVITY_LOW';
 type ActivityHandling = 'START_OF_ACTIVITY_INTERRUPTS' | 'NO_INTERRUPTION';
 type TurnCoverage = 'TURN_INCLUDES_ONLY_ACTIVITY' | 'TURN_INCLUDES_ALL_INPUT';
+type CloneSourceVoiceMode = 'none' | 'google' | 'elevenlabs';
+type GoogleCloneMode = 'chirp_instant_custom_voice' | 'gemini_tts_style';
+type ElevenLabsCloneMode = 'speech_to_speech' | 'transcript_tts';
 
 type LiveMessage = {
   setupComplete?: Record<string, never>;
@@ -89,10 +99,22 @@ type RuntimeSettingsSnapshot = typeof DEFAULT_RUNTIME_SETTINGS & {
   profileLabel?: string;
 };
 
+type ElevenLabsVoiceProfile = {
+  email: string;
+  voice_id: string;
+  consent_version?: string;
+  source_session_id?: string;
+  source_audio_path?: string;
+  requires_verification?: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
 type PersistedWorkspaceState = {
   last_session_id?: string | null;
   active_settings_profile?: SettingsProfileKey;
   runtime_settings?: RuntimeSettingsSnapshot;
+  elevenlabs_voice_profiles?: ElevenLabsVoiceProfile[];
   updated_at?: string;
 };
 
@@ -108,6 +130,9 @@ const START_SENSITIVITY_OPTIONS: StartSensitivity[] = ['START_SENSITIVITY_HIGH',
 const END_SENSITIVITY_OPTIONS: EndSensitivity[] = ['END_SENSITIVITY_HIGH', 'END_SENSITIVITY_LOW'];
 const ACTIVITY_HANDLING_OPTIONS: ActivityHandling[] = ['START_OF_ACTIVITY_INTERRUPTS', 'NO_INTERRUPTION'];
 const TURN_COVERAGE_OPTIONS: TurnCoverage[] = ['TURN_INCLUDES_ONLY_ACTIVITY', 'TURN_INCLUDES_ALL_INPUT'];
+const CLONE_SOURCE_VOICE_OPTIONS: CloneSourceVoiceMode[] = ['none', 'google', 'elevenlabs'];
+const GOOGLE_CLONE_MODE_OPTIONS: GoogleCloneMode[] = ['chirp_instant_custom_voice'];
+const ELEVENLABS_CLONE_MODE_OPTIONS: ElevenLabsCloneMode[] = ['speech_to_speech', 'transcript_tts'];
 const DEFAULT_RUNTIME_SETTINGS = {
   targetLang: DEFAULT_TARGET_LANG,
   echoTarget: false,
@@ -121,6 +146,13 @@ const DEFAULT_RUNTIME_SETTINGS = {
   endSensitivity: 'END_SENSITIVITY_LOW' as EndSensitivity,
   activityHandling: 'START_OF_ACTIVITY_INTERRUPTS' as ActivityHandling,
   turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY' as TurnCoverage,
+  cloneSourceVoiceMode: 'none' as CloneSourceVoiceMode,
+  googleCloneMode: 'chirp_instant_custom_voice' as GoogleCloneMode,
+  elevenLabsCloneMode: 'speech_to_speech' as ElevenLabsCloneMode,
+  cloneSaveAudio: true,
+  cloneFallbackToLiveTranslate: true,
+  cloneVoiceAlias: '',
+  cloneConsentVersion: '',
 };
 const LIVE_TRANSLATE_PRICING = {
   inputPerMillionTokensUsd: 3.5,
@@ -251,6 +283,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function normalizeEmail(value: unknown) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function parseElevenLabsVoiceProfiles(value: unknown): ElevenLabsVoiceProfile[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value
+    .map((item) => {
+      if (!isRecord(item)) return null;
+      const email = normalizeEmail(item.email || item.speaker_email);
+      const voiceId = String(item.voice_id || '').trim();
+      if (!email || !voiceId || seen.has(email)) return null;
+      seen.add(email);
+      return {
+        email,
+        voice_id: voiceId,
+        consent_version: typeof item.consent_version === 'string' ? item.consent_version : undefined,
+        source_session_id: typeof item.source_session_id === 'string' ? item.source_session_id : undefined,
+        source_audio_path: typeof item.source_audio_path === 'string' ? item.source_audio_path : undefined,
+        requires_verification: typeof item.requires_verification === 'boolean' ? item.requires_verification : undefined,
+        created_at: typeof item.created_at === 'string' ? item.created_at : undefined,
+        updated_at: typeof item.updated_at === 'string' ? item.updated_at : undefined,
+      };
+    })
+    .filter((item): item is ElevenLabsVoiceProfile => Boolean(item))
+    .sort((left, right) => left.email.localeCompare(right.email, 'en', { sensitivity: 'base' }));
+}
+
 function detailTokenCount(details: unknown, modality: string) {
   if (!Array.isArray(details)) return 0;
   return details.reduce((sum, item) => {
@@ -314,6 +375,22 @@ function languageSearchText(language: LiveTranslateConfigResponse['supported_lan
   return `${language.code} ${language.label} ${languageDisplayLabel(language)}`.toLowerCase();
 }
 
+function cloneModeLabel(mode: CloneSourceVoiceMode) {
+  if (mode === 'google') return 'Google clone';
+  if (mode === 'elevenlabs') return 'ElevenLabs clone';
+  return 'No clone';
+}
+
+function googleCloneModeLabel(mode: GoogleCloneMode) {
+  if (mode === 'gemini_tts_style') return 'Gemini TTS style';
+  return 'Chirp instant custom voice';
+}
+
+function elevenLabsCloneModeLabel(mode: ElevenLabsCloneMode) {
+  if (mode === 'transcript_tts') return 'Transcript TTS';
+  return 'Speech-to-speech';
+}
+
 function audioDataUrl(base64?: string | null, mimeType?: string | null) {
   return base64 ? `data:${mimeType || 'audio/wav'};base64,${base64}` : null;
 }
@@ -336,6 +413,13 @@ function readStoredSettingsProfile(profileKey: SettingsProfileKey): RuntimeSetti
       endSensitivity: END_SENSITIVITY_OPTIONS.includes(parsed.endSensitivity as EndSensitivity) ? parsed.endSensitivity as EndSensitivity : DEFAULT_RUNTIME_SETTINGS.endSensitivity,
       activityHandling: ACTIVITY_HANDLING_OPTIONS.includes(parsed.activityHandling as ActivityHandling) ? parsed.activityHandling as ActivityHandling : DEFAULT_RUNTIME_SETTINGS.activityHandling,
       turnCoverage: TURN_COVERAGE_OPTIONS.includes(parsed.turnCoverage as TurnCoverage) ? parsed.turnCoverage as TurnCoverage : DEFAULT_RUNTIME_SETTINGS.turnCoverage,
+      cloneSourceVoiceMode: CLONE_SOURCE_VOICE_OPTIONS.includes(parsed.cloneSourceVoiceMode as CloneSourceVoiceMode) ? parsed.cloneSourceVoiceMode as CloneSourceVoiceMode : DEFAULT_RUNTIME_SETTINGS.cloneSourceVoiceMode,
+      googleCloneMode: GOOGLE_CLONE_MODE_OPTIONS.includes(parsed.googleCloneMode as GoogleCloneMode) ? parsed.googleCloneMode as GoogleCloneMode : DEFAULT_RUNTIME_SETTINGS.googleCloneMode,
+      elevenLabsCloneMode: ELEVENLABS_CLONE_MODE_OPTIONS.includes(parsed.elevenLabsCloneMode as ElevenLabsCloneMode) ? parsed.elevenLabsCloneMode as ElevenLabsCloneMode : DEFAULT_RUNTIME_SETTINGS.elevenLabsCloneMode,
+      cloneSaveAudio: typeof parsed.cloneSaveAudio === 'boolean' ? parsed.cloneSaveAudio : DEFAULT_RUNTIME_SETTINGS.cloneSaveAudio,
+      cloneFallbackToLiveTranslate: typeof parsed.cloneFallbackToLiveTranslate === 'boolean' ? parsed.cloneFallbackToLiveTranslate : DEFAULT_RUNTIME_SETTINGS.cloneFallbackToLiveTranslate,
+      cloneVoiceAlias: typeof parsed.cloneVoiceAlias === 'string' ? parsed.cloneVoiceAlias : DEFAULT_RUNTIME_SETTINGS.cloneVoiceAlias,
+      cloneConsentVersion: typeof parsed.cloneConsentVersion === 'string' ? parsed.cloneConsentVersion : DEFAULT_RUNTIME_SETTINGS.cloneConsentVersion,
       savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : undefined,
       profileKey,
       profileLabel: profileLabel(profileKey),
@@ -360,6 +444,22 @@ export default function LiveTranslatePanel() {
   const [endSensitivity, setEndSensitivity] = useState<EndSensitivity>(() => readOptionSetting('lt_end_sensitivity', DEFAULT_RUNTIME_SETTINGS.endSensitivity, END_SENSITIVITY_OPTIONS));
   const [activityHandling, setActivityHandling] = useState<ActivityHandling>(() => readOptionSetting('lt_activity_handling', DEFAULT_RUNTIME_SETTINGS.activityHandling, ACTIVITY_HANDLING_OPTIONS));
   const [turnCoverage, setTurnCoverage] = useState<TurnCoverage>(() => readOptionSetting('lt_turn_coverage', DEFAULT_RUNTIME_SETTINGS.turnCoverage, TURN_COVERAGE_OPTIONS));
+  const [cloneSourceVoiceMode, setCloneSourceVoiceMode] = useState<CloneSourceVoiceMode>(() => readOptionSetting('lt_clone_source_voice_mode', DEFAULT_RUNTIME_SETTINGS.cloneSourceVoiceMode, CLONE_SOURCE_VOICE_OPTIONS));
+  const [googleCloneMode, setGoogleCloneMode] = useState<GoogleCloneMode>(() => readOptionSetting('lt_google_clone_mode', DEFAULT_RUNTIME_SETTINGS.googleCloneMode, GOOGLE_CLONE_MODE_OPTIONS));
+  const [elevenLabsCloneMode, setElevenLabsCloneMode] = useState<ElevenLabsCloneMode>(() => readOptionSetting('lt_elevenlabs_clone_mode', DEFAULT_RUNTIME_SETTINGS.elevenLabsCloneMode, ELEVENLABS_CLONE_MODE_OPTIONS));
+  const [cloneSaveAudio, setCloneSaveAudio] = useState(() => readBooleanSetting('lt_clone_save_audio', DEFAULT_RUNTIME_SETTINGS.cloneSaveAudio));
+  const [cloneFallbackToLiveTranslate, setCloneFallbackToLiveTranslate] = useState(() => readBooleanSetting('lt_clone_fallback_to_live_translate', DEFAULT_RUNTIME_SETTINGS.cloneFallbackToLiveTranslate));
+  const [cloneVoiceAlias, setCloneVoiceAlias] = useState(() => readStringSetting('lt_clone_voice_alias', DEFAULT_RUNTIME_SETTINGS.cloneVoiceAlias));
+  const [cloneConsentVersion, setCloneConsentVersion] = useState(() => readStringSetting('lt_clone_consent_version', DEFAULT_RUNTIME_SETTINGS.cloneConsentVersion));
+  const [clonePreflight, setClonePreflight] = useState<LiveTranslateClonePreflightResponse | null>(null);
+  const [clonePreflightStatus, setClonePreflightStatus] = useState('idle');
+  const [clonePlan, setClonePlan] = useState<LiveTranslateClonePlanResponse | null>(null);
+  const [clonePlanStatus, setClonePlanStatus] = useState('idle');
+  const [cloneExecution, setCloneExecution] = useState<LiveTranslateCloneExecuteResponse | null>(null);
+  const [cloneExecutionStatus, setCloneExecutionStatus] = useState('idle');
+  const [elevenLabsVoiceProfiles, setElevenLabsVoiceProfiles] = useState<ElevenLabsVoiceProfile[]>([]);
+  const [elevenLabsVoiceEmail, setElevenLabsVoiceEmail] = useState('');
+  const [voiceProfileStatus, setVoiceProfileStatus] = useState('idle');
   const [activeSettingsProfile, setActiveSettingsProfile] = useState<SettingsProfileKey>(() => readOptionSetting('lt_active_settings_profile', 'general', SETTINGS_PROFILE_KEYS));
   const [lastProfileNotice, setLastProfileNotice] = useState('');
   const [status, setStatus] = useState<StreamStatus>('idle');
@@ -443,6 +543,13 @@ export default function LiveTranslatePanel() {
     if (END_SENSITIVITY_OPTIONS.includes(settings.endSensitivity as EndSensitivity)) setEndSensitivity(settings.endSensitivity as EndSensitivity);
     if (ACTIVITY_HANDLING_OPTIONS.includes(settings.activityHandling as ActivityHandling)) setActivityHandling(settings.activityHandling as ActivityHandling);
     if (TURN_COVERAGE_OPTIONS.includes(settings.turnCoverage as TurnCoverage)) setTurnCoverage(settings.turnCoverage as TurnCoverage);
+    if (CLONE_SOURCE_VOICE_OPTIONS.includes(settings.cloneSourceVoiceMode as CloneSourceVoiceMode)) setCloneSourceVoiceMode(settings.cloneSourceVoiceMode as CloneSourceVoiceMode);
+    if (GOOGLE_CLONE_MODE_OPTIONS.includes(settings.googleCloneMode as GoogleCloneMode)) setGoogleCloneMode(settings.googleCloneMode as GoogleCloneMode);
+    if (ELEVENLABS_CLONE_MODE_OPTIONS.includes(settings.elevenLabsCloneMode as ElevenLabsCloneMode)) setElevenLabsCloneMode(settings.elevenLabsCloneMode as ElevenLabsCloneMode);
+    if (typeof settings.cloneSaveAudio === 'boolean') setCloneSaveAudio(settings.cloneSaveAudio);
+    if (typeof settings.cloneFallbackToLiveTranslate === 'boolean') setCloneFallbackToLiveTranslate(settings.cloneFallbackToLiveTranslate);
+    if (typeof settings.cloneVoiceAlias === 'string') setCloneVoiceAlias(settings.cloneVoiceAlias);
+    if (typeof settings.cloneConsentVersion === 'string') setCloneConsentVersion(settings.cloneConsentVersion);
   }
 
   function currentRuntimeSettings(profileKey = activeSettingsProfile): RuntimeSettingsSnapshot {
@@ -459,10 +566,390 @@ export default function LiveTranslatePanel() {
       endSensitivity,
       activityHandling,
       turnCoverage,
+      cloneSourceVoiceMode,
+      googleCloneMode,
+      elevenLabsCloneMode,
+      cloneSaveAudio,
+      cloneFallbackToLiveTranslate,
+      cloneVoiceAlias,
+      cloneConsentVersion,
       savedAt: new Date().toISOString(),
       profileKey,
       profileLabel: profileLabel(profileKey),
     };
+  }
+
+  function currentSourceVoiceCloneMetadata(runtimeSettings = currentRuntimeSettings(activeSettingsProfile)) {
+    const mode = runtimeSettings.cloneSourceVoiceMode;
+    const providerMode = mode === 'google'
+      ? runtimeSettings.googleCloneMode
+      : mode === 'elevenlabs'
+        ? runtimeSettings.elevenLabsCloneMode
+        : null;
+    const providerReadiness = mode === 'none'
+      ? null
+      : config?.runtime_controls?.source_voice_clone_providers?.[mode] || null;
+    return {
+      mode,
+      enabled: mode !== 'none',
+      provider: mode === 'none' ? null : mode,
+      provider_mode: providerMode,
+      provider_readiness: providerReadiness,
+      provider_preflight: clonePreflight?.provider === mode ? clonePreflight : null,
+      setting_profile_key: runtimeSettings.profileKey,
+      setting_profile_label: runtimeSettings.profileLabel,
+      voice_alias: mode === 'google' ? null : runtimeSettings.cloneVoiceAlias || null,
+      voice_profile_email: mode === 'elevenlabs'
+        ? elevenLabsVoiceProfiles.find((item) => item.voice_id === runtimeSettings.cloneVoiceAlias)?.email || normalizeEmail(elevenLabsVoiceEmail) || null
+        : null,
+      consent_version: runtimeSettings.cloneConsentVersion || null,
+      save_cloned_audio: runtimeSettings.cloneSaveAudio,
+      fallback_to_live_translate_audio: runtimeSettings.cloneFallbackToLiveTranslate,
+      fallback_active: false,
+      fallback_from: null,
+      fallback_to: null,
+      fallback_reason: null,
+      execution_status: mode === 'none' ? 'off_current_live_translate_path' : 'configured_waiting_for_create_cloned_audio',
+      cost_status: mode === 'none' ? 'no_extra_cost' : 'provider_cost_not_estimated_until_execution',
+    };
+  }
+
+  function selectedCloneProviderMode() {
+    if (cloneSourceVoiceMode === 'google') return googleCloneMode;
+    if (cloneSourceVoiceMode === 'elevenlabs') return elevenLabsCloneMode;
+    return null;
+  }
+
+  function selectCloneSourceVoiceMode(mode: CloneSourceVoiceMode) {
+    if (mode === cloneSourceVoiceMode) return;
+    setCloneSourceVoiceMode(mode);
+    setClonePreflightStatus(mode === 'none' ? 'idle' : 'checking');
+    recordEvent('clone.mode_selected', {
+      from: cloneSourceVoiceMode,
+      to: mode,
+      session_id: activeSavedSessionId() || sessionIdRef.current || null,
+    });
+  }
+
+  function activeSavedSessionId() {
+    const activeId = sessionIdRef.current;
+    const hasActiveSavedSession = saved?.session_id === activeId || sessionDetail?.session_id === activeId;
+    if (!hasActiveSavedSession) return '';
+    return activeId;
+  }
+
+  function applyElevenLabsVoiceProfile(profile: ElevenLabsVoiceProfile) {
+    setElevenLabsVoiceEmail(profile.email);
+    setCloneVoiceAlias(profile.voice_id);
+    if (profile.consent_version) setCloneConsentVersion(profile.consent_version);
+    setVoiceProfileStatus(`Selected ${profile.email}`);
+    recordEvent('clone.voice_profile_selected', {
+      email: profile.email,
+      voice_id: profile.voice_id,
+      source_session_id: profile.source_session_id || null,
+    });
+  }
+
+  function upsertElevenLabsVoiceProfile(profile: ElevenLabsVoiceProfile) {
+    const normalizedEmail = normalizeEmail(profile.email);
+    if (!normalizedEmail || !profile.voice_id.trim()) return elevenLabsVoiceProfiles;
+    const now = new Date().toISOString();
+    const nextProfile = {
+      ...profile,
+      email: normalizedEmail,
+      voice_id: profile.voice_id.trim(),
+      updated_at: now,
+      created_at: profile.created_at || now,
+    };
+    const next = [
+      nextProfile,
+      ...elevenLabsVoiceProfiles.filter((item) => item.email !== normalizedEmail),
+    ].sort((left, right) => left.email.localeCompare(right.email, 'en', { sensitivity: 'base' }));
+    setElevenLabsVoiceProfiles(next);
+    persistWorkspaceState(next);
+    return next;
+  }
+
+  function saveCurrentElevenLabsVoiceProfile() {
+    const email = normalizeEmail(elevenLabsVoiceEmail);
+    const voiceId = cloneVoiceAlias.trim();
+    if (!email || !voiceId) {
+      setVoiceProfileStatus('Enter speaker email and voice_id before saving.');
+      return;
+    }
+    const next = upsertElevenLabsVoiceProfile({
+      email,
+      voice_id: voiceId,
+      consent_version: cloneConsentVersion.trim() || undefined,
+      source_session_id: activeSavedSessionId() || undefined,
+    });
+    setVoiceProfileStatus(`Saved voice profile for ${email}`);
+    recordEvent('clone.voice_profile_saved', { email, voice_id: voiceId, count: next.length });
+  }
+
+  async function createElevenLabsVoiceProfileFromSession() {
+    const sessionId = activeSavedSessionId();
+    const email = normalizeEmail(elevenLabsVoiceEmail);
+    const consentVersion = cloneConsentVersion.trim();
+    if (!sessionId) {
+      setVoiceProfileStatus('Restore or save a session with Source audio first.');
+      return;
+    }
+    if (!email) {
+      setVoiceProfileStatus('Enter speaker email before creating voice_id.');
+      return;
+    }
+    if (!consentVersion) {
+      setVoiceProfileStatus('Set voice consent before creating voice_id.');
+      return;
+    }
+    setVoiceProfileStatus('Creating ElevenLabs voice_id...');
+    beginWait('Creating voice_id', undefined, email, 'warning');
+    try {
+      const response = await createElevenLabsVoiceProfile({
+        session_id: sessionId,
+        speaker_email: email,
+        consent_version: consentVersion,
+      });
+      if (response.status !== 'completed' || !response.voice_id) {
+        const detail = [
+          response.provider_error_message || response.fallback_reason || response.message || response.blockers?.join(', ') || 'Voice profile creation failed.',
+          response.provider_http_status ? `HTTP ${response.provider_http_status}` : '',
+          response.provider_error_code ? `Code: ${response.provider_error_code}` : '',
+          response.provider_error_type ? `Type: ${response.provider_error_type}` : '',
+          response.source_seconds !== undefined && response.min_source_seconds !== undefined ? `Source ${response.source_seconds}s / min ${response.min_source_seconds}s` : '',
+          response.provider_error_sample ? `Detail: ${String(response.provider_error_sample).slice(0, 180)}` : '',
+          response.next_steps?.length ? `Next: ${response.next_steps.join(' / ')}` : '',
+          response.voice_profile_result_path ? `Saved: voice_profile_result.json` : '',
+        ].filter(Boolean).join(' | ');
+        setVoiceProfileStatus(detail);
+        beginWait('Voice profile failed', undefined, detail, 'danger');
+        recordEvent('clone.voice_profile_create_blocked', {
+          email,
+          status: response.status,
+          missing: response.missing || [],
+          blockers: response.blockers || [],
+          provider_http_status: response.provider_http_status || null,
+          provider_error_sample: response.provider_error_sample || null,
+          provider_error_code: response.provider_error_code || null,
+          provider_error_type: response.provider_error_type || null,
+          provider_error_status: response.provider_error_status || null,
+          next_steps: response.next_steps || [],
+          source_seconds: response.source_seconds ?? null,
+          min_source_seconds: response.min_source_seconds ?? null,
+          voice_profile_result_path: response.voice_profile_result_path || null,
+          saved_paths: response.saved_paths || [],
+          persist_error: response.persist_error || null,
+        });
+        return;
+      }
+      const profile: ElevenLabsVoiceProfile = {
+        email,
+        voice_id: response.voice_id,
+        consent_version: response.consent_version || consentVersion,
+        source_session_id: response.session_id || sessionId,
+        source_audio_path: response.source_audio_path,
+        requires_verification: response.requires_verification,
+        created_at: response.created_at || new Date().toISOString(),
+      };
+      const next = upsertElevenLabsVoiceProfile(profile);
+      applyElevenLabsVoiceProfile(profile);
+      setVoiceProfileStatus(`Created voice_id for ${email}`);
+      clearWait();
+      recordEvent('clone.voice_profile_created', {
+        email,
+        voice_id: response.voice_id,
+        count: next.length,
+        requires_verification: response.requires_verification || false,
+        voice_profile_result_path: response.voice_profile_result_path || null,
+        saved_paths: response.saved_paths || [],
+      });
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : 'Voice profile creation failed.';
+      setVoiceProfileStatus(message);
+      beginWait('Voice profile failed', undefined, message, 'danger');
+      recordEvent('clone.voice_profile_create_failed', { email, message });
+    }
+  }
+
+  async function checkCloneProviderPreflight() {
+    if (cloneSourceVoiceMode === 'none') {
+      setClonePreflight(null);
+      setClonePreflightStatus('idle');
+      return;
+    }
+    setClonePreflightStatus('checking');
+    try {
+      const response = await runLiveTranslateClonePreflight({
+        provider: cloneSourceVoiceMode,
+        provider_mode: selectedCloneProviderMode(),
+        target_language_code: targetLang,
+        voice_alias: cloneSourceVoiceMode === 'google' ? '' : cloneVoiceAlias,
+      });
+      setClonePreflight(response);
+      setClonePreflightStatus(response.ready ? 'ready' : 'fallback');
+      recordEvent('clone.preflight_checked', { ...response });
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : 'Clone preflight failed.';
+      setClonePreflightStatus(message);
+      setClonePreflight({
+        status: 'error',
+        provider: cloneSourceVoiceMode,
+        provider_mode: selectedCloneProviderMode(),
+        ready: false,
+        can_execute: false,
+        fallback_active: true,
+        fallback_reason: message,
+        missing: [],
+        blockers: ['preflight_request_failed'],
+        next_steps: [message],
+        checked_at: new Date().toISOString(),
+      });
+      recordEvent('clone.preflight_failed', { provider: cloneSourceVoiceMode, message });
+    }
+  }
+
+  async function prepareClonePlan() {
+    const sessionId = activeSavedSessionId();
+    if (!sessionId || cloneSourceVoiceMode === 'none') {
+      setClonePlanStatus('save session first');
+      return;
+    }
+    setClonePlanStatus('preparing');
+    try {
+      const response = await prepareLiveTranslateClonePlan({
+        session_id: sessionId,
+        provider: cloneSourceVoiceMode,
+        provider_mode: selectedCloneProviderMode(),
+        target_language_code: targetLang,
+        voice_alias: cloneSourceVoiceMode === 'google' ? '' : cloneVoiceAlias,
+        consent_version: cloneConsentVersion,
+        save_cloned_audio: cloneSaveAudio,
+        fallback_to_live_translate_audio: cloneFallbackToLiveTranslate,
+      });
+      setClonePlan(response);
+      setClonePlanStatus(response.plan?.status ? String(response.plan.status) : response.status);
+      recordEvent('clone.plan_prepared', { ...response, plan: undefined, saved_paths: response.saved_paths });
+      if (response.session_id) await loadSessionDetail(response.session_id);
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : 'Clone plan failed.';
+      setClonePlanStatus(message);
+      setClonePlan({
+        status: 'error',
+        message,
+        session_id: sessionId,
+        plan: {
+          status: 'error',
+          provider: cloneSourceVoiceMode,
+          provider_mode: selectedCloneProviderMode(),
+          blockers: ['clone_plan_request_failed'],
+        },
+      });
+      recordEvent('clone.plan_failed', { provider: cloneSourceVoiceMode, session_id: sessionId, message });
+    }
+  }
+
+  async function runCloneExecution() {
+    if (cloneSourceVoiceMode === 'elevenlabs' && !cloneVoiceAlias.trim()) {
+      const message = 'Enter an approved ElevenLabs voice_id before creating cloned audio.';
+      setCloneExecutionStatus('elevenlabs_voice_id_missing');
+      setCloneExecution({
+        status: 'blocked',
+        session_id: activeSavedSessionId() || sessionIdRef.current,
+        result: {
+          status: 'blocked_fallback_to_no_clone',
+          provider: 'elevenlabs',
+          provider_mode: selectedCloneProviderMode(),
+          fallback_reason: 'elevenlabs_voice_id_missing',
+          missing: ['ElevenLabs voice_id'],
+          blockers: ['elevenlabs_voice_id_missing'],
+          next_steps: [message],
+        },
+      });
+      beginWait('Clone blocked', undefined, message, 'danger');
+      recordEvent('clone.execution_blocked', { provider: cloneSourceVoiceMode, reason: 'elevenlabs_voice_id_missing' });
+      return;
+    }
+    let sessionId = activeSavedSessionId();
+    if (!sessionId || cloneSourceVoiceMode === 'none') {
+      if (cloneSourceVoiceMode === 'none') {
+        setCloneExecutionStatus('select clone provider');
+        return;
+      }
+      const savedResponse = await saveSession();
+      sessionId = savedResponse?.session_id || '';
+      if (!sessionId) {
+        setCloneExecutionStatus('save session failed');
+        return;
+      }
+    }
+    setCloneExecutionStatus('running');
+    beginWait('Running voice clone', undefined, cloneModeLabel(cloneSourceVoiceMode), 'warning');
+    try {
+      const response = await executeLiveTranslateClone({
+        session_id: sessionId,
+        provider: cloneSourceVoiceMode,
+        provider_mode: selectedCloneProviderMode(),
+        target_language_code: targetLang,
+        voice_alias: cloneSourceVoiceMode === 'google' ? '' : cloneVoiceAlias,
+        consent_version: cloneConsentVersion,
+        save_cloned_audio: cloneSaveAudio,
+        fallback_to_live_translate_audio: cloneFallbackToLiveTranslate,
+        client_context: {
+          active_session_id: sessionId,
+          session_ref_id: sessionIdRef.current,
+          saved_session_id: saved?.session_id || null,
+          session_detail_id: sessionDetail?.session_id || null,
+          clone_source_voice_mode: cloneSourceVoiceMode,
+          selected_provider_mode: selectedCloneProviderMode(),
+          session_detail_has_source_audio: Boolean(storedAudioSrc('source')),
+          session_detail_has_target_audio: Boolean(storedAudioSrc('target')),
+          source_pcm_chunks: sourcePcmChunksRef.current.length,
+          target_pcm_chunks: targetPcmChunksRef.current.length,
+          saved_paths: saved?.saved_paths || [],
+        },
+      });
+      setCloneExecution(response);
+      const resultRecord = isRecord(response.result) ? response.result : {};
+      const resultStatus = resultRecord.status ? String(resultRecord.status) : response.status;
+      const providerErrorMessage = resultRecord.provider_error_message ? String(resultRecord.provider_error_message) : '';
+      const fallbackReason = resultRecord.fallback_reason ? String(resultRecord.fallback_reason) : '';
+      const resultMessage = providerErrorMessage || fallbackReason || resultStatus;
+      setCloneExecutionStatus(resultStatus);
+      recordEvent('clone.execution_finished', {
+        status: response.status,
+        session_id: response.session_id,
+        provider: cloneSourceVoiceMode,
+        provider_mode: selectedCloneProviderMode(),
+        result_status: resultStatus,
+        fallback_reason: fallbackReason || null,
+        provider_error_message: providerErrorMessage || null,
+        provider_http_status: resultRecord.provider_http_status || null,
+        saved_paths: response.saved_paths,
+      });
+      if (response.session_id) await loadSessionDetail(response.session_id);
+      if (resultStatus === 'completed') {
+        clearWait();
+      } else {
+        beginWait('Clone failed', undefined, resultMessage || 'Provider did not create cloned audio.', 'danger');
+      }
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : 'Clone execution failed.';
+      setCloneExecutionStatus(message);
+      setCloneExecution({
+        status: 'error',
+        message,
+        session_id: sessionId,
+        result: {
+          status: 'error',
+          provider: cloneSourceVoiceMode,
+          provider_mode: selectedCloneProviderMode(),
+          blockers: ['clone_execution_request_failed'],
+        },
+      });
+      beginWait('Clone failed', undefined, message, 'danger');
+      recordEvent('clone.execution_failed', { provider: cloneSourceVoiceMode, session_id: sessionId, message });
+    }
   }
 
   function saveSettingsProfile(profileKey: SettingsProfileKey) {
@@ -508,6 +995,13 @@ export default function LiveTranslatePanel() {
       if (!isRecord(section)) return lastSessionId;
       const runtimeSettings = isRecord(section.runtime_settings) ? section.runtime_settings : {};
       if (Object.keys(runtimeSettings).length) applyRuntimeSettings(runtimeSettings);
+      const savedVoiceProfiles = parseElevenLabsVoiceProfiles(section.elevenlabs_voice_profiles);
+      setElevenLabsVoiceProfiles(savedVoiceProfiles);
+      if (!cloneVoiceAlias && savedVoiceProfiles.length > 0) {
+        setElevenLabsVoiceEmail(savedVoiceProfiles[0].email);
+        setCloneVoiceAlias(savedVoiceProfiles[0].voice_id);
+        if (savedVoiceProfiles[0].consent_version) setCloneConsentVersion(savedVoiceProfiles[0].consent_version);
+      }
       const profileKey = String(section.active_settings_profile || runtimeSettings.profileKey || '');
       if (SETTINGS_PROFILE_KEYS.includes(profileKey as SettingsProfileKey)) {
         setActiveSettingsProfile(profileKey as SettingsProfileKey);
@@ -520,6 +1014,7 @@ export default function LiveTranslatePanel() {
         section: DASHBOARD_SETTINGS_SECTION,
         last_session_id: savedSessionId || null,
         has_runtime_settings: Object.keys(runtimeSettings).length > 0,
+        voice_profile_count: savedVoiceProfiles.length,
       });
       return savedSessionId || null;
     } catch (exc) {
@@ -530,17 +1025,22 @@ export default function LiveTranslatePanel() {
     }
   }
 
-  function persistWorkspaceState() {
-    const nextSessionId = lastSessionId || saved?.session_id || null;
-    window.localStorage.setItem('lt_last_session_id', nextSessionId || '');
-    const payload: PersistedWorkspaceState = {
+  function persistedWorkspacePayload(nextSessionId = lastSessionId || saved?.session_id || null, voiceProfiles = elevenLabsVoiceProfiles): PersistedWorkspaceState {
+    return {
       last_session_id: nextSessionId,
       active_settings_profile: activeSettingsProfile,
       runtime_settings: currentRuntimeSettings(activeSettingsProfile),
+      elevenlabs_voice_profiles: voiceProfiles,
       updated_at: new Date().toISOString(),
     };
+  }
+
+  function persistWorkspaceState(voiceProfiles = elevenLabsVoiceProfiles) {
+    const nextSessionId = lastSessionId || saved?.session_id || null;
+    window.localStorage.setItem('lt_last_session_id', nextSessionId || '');
+    const payload = persistedWorkspacePayload(nextSessionId, voiceProfiles);
     saveConsoleDashboardSettingsSection(DASHBOARD_SETTINGS_SECTION, payload as Record<string, unknown>)
-      .then(() => recordEvent('settings.dashboard_saved', { last_session_id: nextSessionId }))
+      .then(() => recordEvent('settings.dashboard_saved', { last_session_id: nextSessionId, voice_profile_count: voiceProfiles.length }))
       .catch((exc) => recordEvent('settings.dashboard_save_failed', { message: exc instanceof Error ? exc.message : String(exc) }));
   }
 
@@ -597,6 +1097,73 @@ export default function LiveTranslatePanel() {
   useEffect(() => { window.localStorage.setItem('lt_end_sensitivity', endSensitivity); }, [endSensitivity]);
   useEffect(() => { window.localStorage.setItem('lt_activity_handling', activityHandling); }, [activityHandling]);
   useEffect(() => { window.localStorage.setItem('lt_turn_coverage', turnCoverage); }, [turnCoverage]);
+  useEffect(() => { window.localStorage.setItem('lt_clone_source_voice_mode', cloneSourceVoiceMode); }, [cloneSourceVoiceMode]);
+  useEffect(() => { window.localStorage.setItem('lt_google_clone_mode', googleCloneMode); }, [googleCloneMode]);
+  useEffect(() => { window.localStorage.setItem('lt_elevenlabs_clone_mode', elevenLabsCloneMode); }, [elevenLabsCloneMode]);
+  useEffect(() => { window.localStorage.setItem('lt_clone_save_audio', String(cloneSaveAudio)); }, [cloneSaveAudio]);
+  useEffect(() => { window.localStorage.setItem('lt_clone_fallback_to_live_translate', String(cloneFallbackToLiveTranslate)); }, [cloneFallbackToLiveTranslate]);
+  useEffect(() => { window.localStorage.setItem('lt_clone_voice_alias', cloneVoiceAlias); }, [cloneVoiceAlias]);
+  useEffect(() => { window.localStorage.setItem('lt_clone_consent_version', cloneConsentVersion); }, [cloneConsentVersion]);
+
+  useEffect(() => {
+    setClonePreflight(null);
+    setClonePreflightStatus(cloneSourceVoiceMode === 'none' ? 'idle' : 'checking');
+    setClonePlan(null);
+    setClonePlanStatus('idle');
+    setCloneExecution(null);
+    setCloneExecutionStatus('idle');
+  }, [cloneSourceVoiceMode, googleCloneMode, elevenLabsCloneMode, targetLang, cloneVoiceAlias]);
+
+  useEffect(() => {
+    if (cloneSourceVoiceMode === 'none') return undefined;
+    let cancelled = false;
+    const provider = cloneSourceVoiceMode;
+    const providerMode = selectedCloneProviderMode();
+    const voiceAlias = provider === 'google' ? '' : cloneVoiceAlias;
+    const timer = window.setTimeout(async () => {
+      setClonePreflightStatus('checking');
+      try {
+        const response = await runLiveTranslateClonePreflight({
+          provider,
+          provider_mode: providerMode,
+          target_language_code: targetLang,
+          voice_alias: voiceAlias,
+        });
+        if (cancelled) return;
+        setClonePreflight(response);
+        setClonePreflightStatus(response.ready ? 'ready' : 'fallback');
+        recordEvent('clone.preflight_auto_checked', {
+          provider,
+          provider_mode: providerMode,
+          ready: response.ready,
+          blockers: response.blockers || [],
+          missing: response.missing || [],
+        });
+      } catch (exc) {
+        if (cancelled) return;
+        const message = exc instanceof Error ? exc.message : 'Clone preflight failed.';
+        setClonePreflightStatus('fallback');
+        setClonePreflight({
+          status: 'error',
+          provider,
+          provider_mode: providerMode,
+          ready: false,
+          can_execute: false,
+          fallback_active: true,
+          fallback_reason: message,
+          missing: [],
+          blockers: ['preflight_request_failed'],
+          next_steps: [message],
+          checked_at: new Date().toISOString(),
+        });
+        recordEvent('clone.preflight_auto_failed', { provider, provider_mode: providerMode, message });
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [cloneSourceVoiceMode, googleCloneMode, elevenLabsCloneMode, targetLang, cloneVoiceAlias]);
 
   useEffect(() => {
     window.localStorage.setItem('lt_last_session_id', lastSessionId || '');
@@ -614,8 +1181,15 @@ export default function LiveTranslatePanel() {
   }, [
     activeSettingsProfile,
     audioChunkMs,
+    cloneConsentVersion,
+    cloneFallbackToLiveTranslate,
+    cloneSaveAudio,
+    cloneSourceVoiceMode,
+    cloneVoiceAlias,
     echoTarget,
+    elevenLabsCloneMode,
     endSensitivity,
+    googleCloneMode,
     inputTranscriptEnabled,
     lastSessionId,
     outputTranscriptEnabled,
@@ -692,6 +1266,10 @@ export default function LiveTranslatePanel() {
     syncOutput([]);
     setSaved(null);
     setSessionDetail(null);
+    setClonePlan(null);
+    setClonePlanStatus('idle');
+    setCloneExecution(null);
+    setCloneExecutionStatus('idle');
     setError(null);
     setMonitor(defaultMonitor());
     setStatus('idle');
@@ -709,6 +1287,10 @@ export default function LiveTranslatePanel() {
     syncOutput([]);
     setSaved(null);
     setSessionDetail(null);
+    setClonePlan(null);
+    setClonePlanStatus('idle');
+    setCloneExecution(null);
+    setCloneExecutionStatus('idle');
     setError(null);
     setMonitor(defaultMonitor());
   }
@@ -1240,15 +1822,18 @@ export default function LiveTranslatePanel() {
     inputAudioCtxRef.current = null;
   }
 
-  function storedAudioSrc(kind: 'source' | 'target') {
+  function storedAudioSrc(kind: 'source' | 'target' | 'cloned') {
     if (!sessionDetail) return null;
     if (kind === 'source') {
       return sessionDetail.source_audio_url || audioDataUrl(sessionDetail.source_audio_base64, sessionDetail.source_audio_mime_type);
     }
+    if (kind === 'cloned') {
+      return sessionDetail.target_cloned_audio_url || audioDataUrl(sessionDetail.target_cloned_audio_base64, sessionDetail.target_cloned_audio_mime_type);
+    }
     return sessionDetail.target_audio_url || audioDataUrl(sessionDetail.target_audio_base64, sessionDetail.target_audio_mime_type);
   }
 
-  async function playStoredAudio(kind: 'source' | 'target') {
+  async function playStoredAudio(kind: 'source' | 'target' | 'cloned') {
     const src = storedAudioSrc(kind);
     if (!src) return;
     const audio = new Audio(src);
@@ -1272,13 +1857,14 @@ export default function LiveTranslatePanel() {
     });
   }
 
-  async function saveSession() {
+  async function saveSession(): Promise<LiveTranslateSaveResponse | null> {
     setStatus('saving');
     setError(null);
     beginWait('Saving session', undefined, 'Writing transcripts, audio and logs to GCS.', 'info');
     try {
       const runtimeSettings = currentRuntimeSettings(activeSettingsProfile);
       const savedProfile = readStoredSettingsProfile(activeSettingsProfile);
+      const sourceVoiceClone = currentSourceVoiceCloneMetadata(runtimeSettings);
       const sessionId = saved ? nowId() : sessionIdRef.current;
       sessionIdRef.current = sessionId;
       const sourceAudio = sourcePcmChunksRef.current.length
@@ -1306,6 +1892,7 @@ export default function LiveTranslatePanel() {
             saved_at: savedProfile?.savedAt || null,
           },
           runtime_settings: runtimeSettings,
+          source_voice_clone: sourceVoiceClone,
           frontend_log: eventLogRef.current,
         },
       });
@@ -1314,10 +1901,12 @@ export default function LiveTranslatePanel() {
       await loadSavedSessions(response.session_id);
       clearWait();
       setStatus('stopped');
+      return response;
     } catch (exc) {
       setStatus('stopped');
       setError(exc instanceof Error ? exc.message : 'Save session failed.');
       beginWait('Save failed', undefined, exc instanceof Error ? exc.message : 'Save session failed.', 'danger');
+      return null;
     }
   }
 
@@ -1330,6 +1919,7 @@ export default function LiveTranslatePanel() {
     const savedRuntime = isRecord(metadata.runtime_settings) ? metadata.runtime_settings : {};
     const settingsProfile = isRecord(metadata.settings_profile) ? metadata.settings_profile : {};
     const savedMonitor = isRecord(metadata.monitor) ? metadata.monitor : {};
+    const savedClone = isRecord(metadata.source_voice_clone) ? metadata.source_voice_clone : {};
     const input = (detail.input_transcript || []).map((item) => {
       segmentIdRef.current += 1;
       return {
@@ -1355,6 +1945,23 @@ export default function LiveTranslatePanel() {
     syncOutput(output);
     setEchoTarget(Boolean(session.echo_target_language ?? savedRuntime.echoTarget ?? false));
     if (Object.keys(savedRuntime).length) applyRuntimeSettings(savedRuntime, { persistTarget: false });
+    const runtimeCloneMode = savedRuntime.cloneSourceVoiceMode;
+    const metadataCloneMode = savedClone.mode;
+    const hasRuntimeCloneMode = CLONE_SOURCE_VOICE_OPTIONS.includes(runtimeCloneMode as CloneSourceVoiceMode);
+    const hasMetadataCloneMode = CLONE_SOURCE_VOICE_OPTIONS.includes(metadataCloneMode as CloneSourceVoiceMode);
+    if (hasMetadataCloneMode) setCloneSourceVoiceMode(metadataCloneMode as CloneSourceVoiceMode);
+    else if (!hasRuntimeCloneMode) setCloneSourceVoiceMode('none');
+    if (typeof savedClone.voice_alias === 'string') setCloneVoiceAlias(savedClone.voice_alias);
+    if (typeof savedClone.voice_profile_email === 'string') setElevenLabsVoiceEmail(savedClone.voice_profile_email);
+    if (typeof savedClone.consent_version === 'string') setCloneConsentVersion(savedClone.consent_version);
+    if (typeof savedClone.save_cloned_audio === 'boolean') setCloneSaveAudio(savedClone.save_cloned_audio);
+    if (typeof savedClone.fallback_to_live_translate_audio === 'boolean') setCloneFallbackToLiveTranslate(savedClone.fallback_to_live_translate_audio);
+    if (metadataCloneMode === 'google' && GOOGLE_CLONE_MODE_OPTIONS.includes(savedClone.provider_mode as GoogleCloneMode)) {
+      setGoogleCloneMode(savedClone.provider_mode as GoogleCloneMode);
+    }
+    if (metadataCloneMode === 'elevenlabs' && ELEVENLABS_CLONE_MODE_OPTIONS.includes(savedClone.provider_mode as ElevenLabsCloneMode)) {
+      setElevenLabsCloneMode(savedClone.provider_mode as ElevenLabsCloneMode);
+    }
     if (SETTINGS_PROFILE_KEYS.includes(settingsProfile.key as SettingsProfileKey)) {
       setActiveSettingsProfile(settingsProfile.key as SettingsProfileKey);
       setLastProfileNotice(`Restored ${settingsProfile.label || profileLabel(settingsProfile.key as SettingsProfileKey)} profile from session`);
@@ -1385,6 +1992,20 @@ export default function LiveTranslatePanel() {
       prefix: detail.prefix,
       saved_paths: [],
     });
+    if (isRecord(detail.clone_plan)) {
+      setClonePlan({ status: 'restored', bucket: detail.bucket, session_id: detail.session_id, prefix: detail.prefix, plan: detail.clone_plan, saved_paths: [`${detail.prefix}/clone_plan.json`] });
+      setClonePlanStatus(String(detail.clone_plan.status || 'restored'));
+    } else {
+      setClonePlan(null);
+      setClonePlanStatus('idle');
+    }
+    if (isRecord(detail.clone_result)) {
+      setCloneExecution({ status: 'restored', bucket: detail.bucket, session_id: detail.session_id, prefix: detail.prefix, result: detail.clone_result, saved_paths: [`${detail.prefix}/clone_result.json`] });
+      setCloneExecutionStatus(String(detail.clone_result.status || 'restored'));
+    } else {
+      setCloneExecution(null);
+      setCloneExecutionStatus('idle');
+    }
     setLastSessionId(detail.session_id);
     setError(null);
     setStatus('stopped');
@@ -1441,8 +2062,98 @@ export default function LiveTranslatePanel() {
   const outputLangBadge = outputSegments[0]?.language_code || targetLang;
   const sourceAudioSrc = storedAudioSrc('source');
   const targetAudioSrc = storedAudioSrc('target');
+  const targetClonedAudioSrc = storedAudioSrc('cloned');
   const hasPlayableSourceAudio = sourcePcmChunksRef.current.length > 0 || Boolean(sourceAudioSrc);
   const hasPlayableTargetAudio = targetPcmChunksRef.current.length > 0 || Boolean(targetAudioSrc);
+  const activeCloneProviderMode = cloneSourceVoiceMode === 'google'
+    ? googleCloneModeLabel(googleCloneMode)
+    : cloneSourceVoiceMode === 'elevenlabs'
+      ? elevenLabsCloneModeLabel(elevenLabsCloneMode)
+      : 'off';
+  const selectedCloneProvider = cloneSourceVoiceMode === 'none'
+    ? null
+    : config?.runtime_controls?.source_voice_clone_providers?.[cloneSourceVoiceMode] || null;
+  const cloneProviderCredentialText = !selectedCloneProvider
+    ? ''
+    : selectedCloneProvider.credential_configured
+      ? 'Credential detected'
+      : selectedCloneProvider.required_secret_env
+        ? `Missing ${selectedCloneProvider.required_secret_env}`
+        : 'Credential not confirmed';
+  const cloneProviderSetupText = cloneSourceVoiceMode === 'google'
+    ? 'Needs Google ADC and backend GOOGLE_TTS_VOICE_CLONING_KEY.'
+    : cloneSourceVoiceMode === 'elevenlabs'
+      ? 'Needs ELEVENLABS_API_KEY and an approved voice_id.'
+      : '';
+  const cloneVoiceIdMissing = cloneSourceVoiceMode === 'elevenlabs' && !cloneVoiceAlias.trim();
+  const selectedElevenLabsVoiceProfile = elevenLabsVoiceProfiles.find((item) => item.voice_id === cloneVoiceAlias.trim())
+    || elevenLabsVoiceProfiles.find((item) => item.email === normalizeEmail(elevenLabsVoiceEmail))
+    || null;
+  const voiceProfileCreating = voiceProfileStatus === 'Creating ElevenLabs voice_id...';
+  const cloneHeaderStatus = cloneSourceVoiceMode === 'none'
+    ? 'current path'
+    : cloneExecutionStatus === 'running'
+      ? 'creating clone'
+      : cloneExecutionStatus === 'completed'
+        ? 'clone ready'
+        : clonePreflightStatus === 'checking'
+          ? 'checking setup'
+          : cloneVoiceIdMissing
+            ? 'voice_id required'
+            : clonePreflight?.ready === false
+              ? 'setup blocked'
+              : clonePreflight?.ready
+                ? 'ready to create'
+                : 'choose settings';
+  const cloneFallbackText = '';
+  const clonePreflightClass = cloneExecutionStatus === 'running'
+    ? 'running'
+    : clonePreflightStatus === 'checking'
+      ? 'checking'
+      : cloneVoiceIdMissing || clonePreflight?.ready === false || clonePreflight?.fallback_active
+        ? 'fallback'
+        : selectedCloneProvider?.credential_configured
+          ? 'ready'
+          : 'fallback';
+  const currentSavedSessionId = activeSavedSessionId();
+  const rawClonePlanRecord = isRecord(clonePlan?.plan) ? clonePlan.plan : null;
+  const rawClonePlanProvider = String(rawClonePlanRecord?.provider || '');
+  const rawClonePlanSessionId = String(rawClonePlanRecord?.session_id || clonePlan?.session_id || '');
+  const clonePlanMatchesActiveSelection = Boolean(
+    rawClonePlanRecord
+      && cloneSourceVoiceMode !== 'none'
+      && rawClonePlanProvider === cloneSourceVoiceMode
+      && rawClonePlanSessionId === currentSavedSessionId,
+  );
+  const clonePlanRecord = clonePlanMatchesActiveSelection ? rawClonePlanRecord : null;
+  const rawCloneExecutionRecord = isRecord(cloneExecution?.result) ? cloneExecution.result : null;
+  const rawCloneExecutionProvider = String(rawCloneExecutionRecord?.provider || '');
+  const rawCloneExecutionSessionId = String(rawCloneExecutionRecord?.session_id || cloneExecution?.session_id || '');
+  const cloneExecutionMatchesActiveSelection = Boolean(
+    rawCloneExecutionRecord
+      && cloneSourceVoiceMode !== 'none'
+      && rawCloneExecutionProvider === cloneSourceVoiceMode
+      && rawCloneExecutionSessionId === currentSavedSessionId,
+  );
+  const cloneExecutionRecord = cloneExecutionMatchesActiveSelection ? rawCloneExecutionRecord : null;
+  const cloneExecutionPreflight = isRecord(cloneExecutionRecord?.preflight) ? cloneExecutionRecord.preflight : null;
+  const cloneExecutionStatusText = String(cloneExecutionRecord?.status || cloneExecutionStatus);
+  const cloneOutputPath = cloneExecutionRecord?.target_cloned_audio_path ? String(cloneExecutionRecord.target_cloned_audio_path) : '';
+  const cloneOutputSaved = Boolean(cloneOutputPath && cloneExecution?.saved_paths?.includes(cloneOutputPath));
+  const requestedCloneProviderMode = cloneExecutionRecord?.requested_provider_mode
+    ? String(cloneExecutionRecord.requested_provider_mode)
+    : cloneExecutionPreflight?.requested_provider_mode
+      ? String(cloneExecutionPreflight.requested_provider_mode)
+      : '';
+  const effectiveCloneProviderMode = cloneExecutionRecord?.effective_provider_mode
+    ? String(cloneExecutionRecord.effective_provider_mode)
+    : cloneExecutionRecord?.provider_mode
+      ? String(cloneExecutionRecord.provider_mode)
+      : cloneExecutionPreflight?.effective_provider_mode
+        ? String(cloneExecutionPreflight.effective_provider_mode)
+        : '';
+  const cloneProviderModeFallback = Boolean(requestedCloneProviderMode && effectiveCloneProviderMode && requestedCloneProviderMode !== effectiveCloneProviderMode);
+  const clonePlanSessionReady = Boolean(currentSavedSessionId);
 
   return (
     <div className="live-translate-panel">
@@ -1535,6 +2246,169 @@ export default function LiveTranslatePanel() {
             ))}
           </div>
           {lastProfileNotice && <small>{lastProfileNotice}</small>}
+        </div>
+        <div className={`live-translate-clone-panel ${cloneSourceVoiceMode === 'none' ? 'off' : 'active'}`}>
+          <div className="live-translate-clone-head">
+            <div>
+              <strong>Source voice clone</strong>
+              <span>{cloneSourceVoiceMode === 'none' ? 'Current Gemini Live Translate audio stays unchanged.' : `${cloneModeLabel(cloneSourceVoiceMode)} settings are saved with the session.`}</span>
+            </div>
+            <span>{cloneHeaderStatus}</span>
+          </div>
+          <div className="live-translate-clone-modes" role="radiogroup" aria-label="Source voice clone mode">
+            {CLONE_SOURCE_VOICE_OPTIONS.map((mode) => (
+              <button
+                aria-checked={cloneSourceVoiceMode === mode}
+                className={cloneSourceVoiceMode === mode ? 'active' : ''}
+                disabled={settingsLocked}
+                key={mode}
+                onClick={() => selectCloneSourceVoiceMode(mode)}
+                role="radio"
+                type="button"
+              >
+                {cloneModeLabel(mode)}
+              </button>
+            ))}
+            {cloneFallbackText && <span className="live-translate-clone-fallback">{cloneFallbackText}</span>}
+          </div>
+          {selectedCloneProvider && (
+            <div className={`live-translate-clone-readiness ${clonePreflightClass}`}>
+              <strong>{selectedCloneProvider.label || cloneModeLabel(cloneSourceVoiceMode)}</strong>
+              <span>{cloneProviderSetupText}</span>
+              <span>{cloneProviderCredentialText}</span>
+              {clonePreflightStatus === 'checking' && <span>Checking setup...</span>}
+              {clonePreflight && clonePreflightStatus !== 'checking' && <span>Preflight: {clonePreflight.ready ? 'ready' : 'blocked'}</span>}
+              {clonePreflight?.fallback_reason && <span>Fallback reason: {clonePreflight.fallback_reason}</span>}
+              {Array.isArray(clonePreflight?.blockers) && clonePreflight.blockers.length > 0 && <span>Blockers: {clonePreflight.blockers.join(', ')}</span>}
+              {Array.isArray(clonePreflight?.missing) && clonePreflight.missing.length > 0 && <span>Missing: {clonePreflight.missing.join(', ')}</span>}
+              {Array.isArray(clonePreflight?.next_steps) && clonePreflight.next_steps.length > 0 && <span>Next: {clonePreflight.next_steps.join(' / ')}</span>}
+              <button
+                className="console-secondary-button"
+                disabled={settingsLocked || cloneExecutionStatus === 'running' || !canSave || cloneVoiceIdMissing}
+                onClick={() => void runCloneExecution()}
+                type="button"
+              >
+                {cloneExecutionStatus === 'running' && <Loader2 className="live-translate-spinner" size={14} />}
+                Create cloned audio
+              </button>
+              {!canSave && <span>Record or restore a session with output first.</span>}
+              {cloneVoiceIdMissing && <span>Enter approved ElevenLabs voice_id.</span>}
+            </div>
+          )}
+          {cloneExecutionRecord && (
+            <div className={`live-translate-clone-readiness ${cloneExecutionStatusText.startsWith('completed') ? 'ready' : 'fallback'}`}>
+              <strong>Run: {cloneExecutionStatusText}</strong>
+              {cloneOutputSaved && <span>Saved: target_cloned.mp3</span>}
+              {cloneExecution?.saved_paths?.includes(`${cloneExecution.prefix}/clone_result.json`) && <span>Saved: clone_result.json</span>}
+              {cloneOutputPath && <span>{cloneOutputSaved || cloneExecutionStatusText.startsWith('completed') ? 'Output' : 'Planned output'}: {cloneOutputPath}</span>}
+              {cloneProviderModeFallback && <span>Mode fallback: {requestedCloneProviderMode} -&gt; {effectiveCloneProviderMode}</span>}
+              {cloneExecutionRecord.mode_fallback_reason && <span>Mode fallback reason: {String(cloneExecutionRecord.mode_fallback_reason)}</span>}
+              {cloneExecutionRecord.provider_error_message && <span>Error: {String(cloneExecutionRecord.provider_error_message)}</span>}
+              {cloneExecutionRecord.fallback_reason && <span>Fallback reason: {String(cloneExecutionRecord.fallback_reason)}</span>}
+              {Array.isArray(cloneExecutionRecord.blockers) && cloneExecutionRecord.blockers.length > 0 && <span>Blockers: {cloneExecutionRecord.blockers.join(', ')}</span>}
+              {Array.isArray(cloneExecutionRecord.missing) && cloneExecutionRecord.missing.length > 0 && <span>Missing: {cloneExecutionRecord.missing.join(', ')}</span>}
+              {Array.isArray(cloneExecutionRecord.next_steps) && cloneExecutionRecord.next_steps.length > 0 && <span>Next: {cloneExecutionRecord.next_steps.join(' / ')}</span>}
+              {cloneExecutionRecord.provider_http_status && <span>Provider HTTP: {String(cloneExecutionRecord.provider_http_status)}</span>}
+              {cloneExecutionRecord.provider_error_code && <span>Provider code: {String(cloneExecutionRecord.provider_error_code)}</span>}
+              {cloneExecutionRecord.provider_error_type && <span>Provider type: {String(cloneExecutionRecord.provider_error_type)}</span>}
+              {cloneExecutionRecord.provider_error_sample && <span>Detail: {String(cloneExecutionRecord.provider_error_sample).slice(0, 180)}</span>}
+            </div>
+          )}
+          {cloneSourceVoiceMode !== 'none' && (
+            <>
+              <div className="live-translate-clone-settings">
+                {cloneSourceVoiceMode === 'google' && (
+                  <label className="live-translate-setting-tip" data-tip="Real Google clone path. Requires Chirp Instant Custom Voice access and GOOGLE_TTS_VOICE_CLONING_KEY on the backend.">
+                    <span>Google mode</span>
+                    <select disabled={settingsLocked} onChange={(event) => setGoogleCloneMode(event.target.value as GoogleCloneMode)} value={googleCloneMode}>
+                      {GOOGLE_CLONE_MODE_OPTIONS.map((mode) => (
+                        <option key={mode} value={mode}>{googleCloneModeLabel(mode)}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {cloneSourceVoiceMode === 'elevenlabs' && (
+                  <label className="live-translate-setting-tip" data-tip="Real ElevenLabs clone path. Speech-to-speech uses target audio; transcript TTS uses output transcript.">
+                    <span>ElevenLabs mode</span>
+                    <select disabled={settingsLocked} onChange={(event) => setElevenLabsCloneMode(event.target.value as ElevenLabsCloneMode)} value={elevenLabsCloneMode}>
+                      {ELEVENLABS_CLONE_MODE_OPTIONS.map((mode) => (
+                        <option key={mode} value={mode}>{elevenLabsCloneModeLabel(mode)}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {cloneSourceVoiceMode === 'elevenlabs' && (
+                  <label className="live-translate-setting-tip" data-tip="Saved ElevenLabs voice profiles from console settings. Selecting one fills voice_id with the stored value.">
+                    <span>saved voice</span>
+                    <select
+                      disabled={settingsLocked || elevenLabsVoiceProfiles.length === 0}
+                      onChange={(event) => {
+                        const profile = elevenLabsVoiceProfiles.find((item) => item.email === event.target.value);
+                        if (profile) applyElevenLabsVoiceProfile(profile);
+                      }}
+                      value={selectedElevenLabsVoiceProfile?.email || ''}
+                    >
+                      <option value="">{elevenLabsVoiceProfiles.length ? 'Select saved email' : 'No saved voices'}</option>
+                      {elevenLabsVoiceProfiles.map((profile) => (
+                        <option key={profile.email} value={profile.email}>{profile.email}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {cloneSourceVoiceMode === 'elevenlabs' && (
+                  <label className="live-translate-setting-tip" data-tip="Email is used as the stable label/name for this speaker voice_id. It is saved in console settings.">
+                    <span>speaker email</span>
+                    <input disabled={settingsLocked} onChange={(event) => setElevenLabsVoiceEmail(normalizeEmail(event.target.value))} placeholder="speaker@example.com" type="email" value={elevenLabsVoiceEmail} />
+                  </label>
+                )}
+                {cloneSourceVoiceMode === 'elevenlabs' && (
+                  <label className="live-translate-setting-tip" data-tip="Paste the approved ElevenLabs voice_id. API key stays backend-side in ELEVENLABS_API_KEY.">
+                    <span>voice_id</span>
+                    <input disabled={settingsLocked} onChange={(event) => setCloneVoiceAlias(event.target.value)} placeholder="ElevenLabs voice_id" type="text" value={cloneVoiceAlias} />
+                  </label>
+                )}
+                <label className="live-translate-setting-tip" data-tip="Consent/version marker for audit. Keep empty if consent is already managed outside this console.">
+                  <span>Consent</span>
+                  <input disabled={settingsLocked} onChange={(event) => setCloneConsentVersion(event.target.value)} placeholder="voice-consent-v1" type="text" value={cloneConsentVersion} />
+                </label>
+                <label className="live-translate-setting-tip" data-tip="When provider execution is added, save cloned target audio next to source and Gemini target audio.">
+                  <input checked={cloneSaveAudio} disabled={settingsLocked} onChange={(event) => setCloneSaveAudio(event.target.checked)} type="checkbox" />
+                  <span>Save clone audio</span>
+                </label>
+                <label className="live-translate-setting-tip" data-tip="When provider execution is added, keep current Live Translate audio if clone generation fails.">
+                  <input checked={cloneFallbackToLiveTranslate} disabled={settingsLocked} onChange={(event) => setCloneFallbackToLiveTranslate(event.target.checked)} type="checkbox" />
+                  <span>Fallback audio</span>
+                </label>
+                {cloneSourceVoiceMode === 'elevenlabs' && (
+                  <button
+                    className="console-secondary-button live-translate-clone-action"
+                    disabled={settingsLocked || voiceProfileCreating || !currentSavedSessionId || !elevenLabsVoiceEmail.trim() || !cloneConsentVersion.trim()}
+                    onClick={() => void createElevenLabsVoiceProfileFromSession()}
+                    type="button"
+                  >
+                    {voiceProfileCreating && <Loader2 className="live-translate-spinner" size={14} />}
+                    Create voice_id
+                  </button>
+                )}
+                {cloneSourceVoiceMode === 'elevenlabs' && (
+                  <button
+                    className="console-secondary-button live-translate-clone-action"
+                    disabled={settingsLocked || !elevenLabsVoiceEmail.trim() || !cloneVoiceAlias.trim()}
+                    onClick={saveCurrentElevenLabsVoiceProfile}
+                    type="button"
+                  >
+                    Save voice_id
+                  </button>
+                )}
+              </div>
+              {cloneSourceVoiceMode === 'elevenlabs' && voiceProfileStatus !== 'idle' && (
+                <small className="live-translate-clone-note">Voice profile: {voiceProfileStatus}</small>
+              )}
+              <small className="live-translate-clone-note">
+                Google uses backend GOOGLE_TTS_VOICE_CLONING_KEY only. ElevenLabs uses backend ELEVENLABS_API_KEY plus the selected email/voice_id saved in console settings; consent is stored as an audit marker and must reflect real speaker permission.
+              </small>
+            </>
+          )}
         </div>
         <div className="live-translate-settings-grid">
         <label className="live-translate-setting-tip" data-tip="Client-side PCM packet duration. Range: 100-500ms. Larger values can improve continuity but increase latency.">
@@ -1664,7 +2538,7 @@ export default function LiveTranslatePanel() {
 
       {waitIndicator && (
         <div className={`live-translate-wait live-translate-wait-${waitIndicator.tone}`}>
-          <Loader2 className="live-translate-spinner" size={18} />
+          {waitIndicator.tone !== 'danger' && <Loader2 className="live-translate-spinner" size={18} />}
           <div>
             <strong>{waitIndicator.label}</strong>
             {waitIndicator.detail && <span>{waitIndicator.detail}</span>}
@@ -1694,6 +2568,7 @@ export default function LiveTranslatePanel() {
         <span>Sent: {monitor.chunksSent} chunks</span>
         <span>Level: {monitor.level}% / peak {monitor.peak}%</span>
         <span>Target: {monitor.targetChunks} chunks / {monitor.targetSeconds}s</span>
+        <span>Clone: {cloneModeLabel(cloneSourceVoiceMode)} / {activeCloneProviderMode}</span>
         <span>Server: {monitor.serverMessages} msgs</span>
         <span>Last: {monitor.lastEvent}</span>
       </div>
@@ -1704,8 +2579,10 @@ export default function LiveTranslatePanel() {
         <span>Total tokens: {costEstimate.totalTokens || 'waiting'}</span>
         <span>Token estimate: {formatUsd(costEstimate.tokenCost)}</span>
         <span>Minute estimate: {formatUsd(costEstimate.minuteCost)}</span>
+        <span>Clone estimate: {cloneSourceVoiceMode === 'none' ? '$0.000000' : cloneExecutionRecord?.status === 'completed' ? 'provider billed externally' : 'provider guarded until Run clone'}</span>
         <small>
           Paid tier: input ${LIVE_TRANSLATE_PRICING.inputPerMillionTokensUsd}/1M or ${LIVE_TRANSLATE_PRICING.inputPerMinuteUsd}/min; output ${LIVE_TRANSLATE_PRICING.outputPerMillionTokensUsd}/1M or ${LIVE_TRANSLATE_PRICING.outputPerMinuteUsd}/min.
+          Clone provider cost is kept separate; Run clone stores provider result and guard status in clone_result.json.
         </small>
       </div>
       {monitor.usage && <pre className="live-translate-usage">{monitor.usage}</pre>}
@@ -1776,10 +2653,17 @@ export default function LiveTranslatePanel() {
                 <span>Target audio</span>
                 {targetAudioSrc ? <audio controls src={targetAudioSrc} /> : <small>not saved</small>}
               </label>
+              <label>
+                <span>Cloned audio</span>
+                {targetClonedAudioSrc ? <audio controls src={targetClonedAudioSrc} /> : <small>not saved</small>}
+              </label>
             </div>
             <JsonPanel title="session.json" value={sessionDetail.session} />
             <JsonPanel title="input_transcript.json" value={sessionDetail.input_transcript} />
             <JsonPanel title="output_transcript.json" value={sessionDetail.output_transcript} />
+            <JsonPanel title="clone_plan.json" value={sessionDetail.clone_plan} />
+            <JsonPanel title="clone_result.json" value={sessionDetail.clone_result} />
+            <JsonPanel title="voice_profile_result.json" value={sessionDetail.voice_profile_result} />
             <JsonPanel title="frontend_log.json" value={sessionDetail.frontend_log} />
             <JsonPanel title="backend_log.json" value={sessionDetail.backend_log} />
           </div>

@@ -22,6 +22,7 @@ $RequiredSecrets = @(
     "GEMINI_API_KEY_25",
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
+    "ELEVENLABS_API_KEY",
     "CLOUDFLARE_API_TOKEN",
     "CLOUDFLARE_ACCOUNT_ID",
     "CLOUDFLARE_ZONE_ID",
@@ -179,6 +180,7 @@ Invoke-CheckedStep "Deploy production Admin Console to Cloud Run" {
   --set-secrets="GEMINI_API_KEY_25=GEMINI_API_KEY_25:latest" `
   --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest" `
   --set-secrets="OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest" `
+  --set-secrets="ELEVENLABS_API_KEY=ELEVENLABS_API_KEY:latest" `
   --set-secrets="CLOUDFLARE_API_TOKEN=CLOUDFLARE_API_TOKEN:latest" `
   --set-secrets="CLOUDFLARE_ACCOUNT_ID=CLOUDFLARE_ACCOUNT_ID:latest" `
   --set-secrets="CLOUDFLARE_ZONE_ID=CLOUDFLARE_ZONE_ID:latest" `

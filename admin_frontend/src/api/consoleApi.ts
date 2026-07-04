@@ -963,6 +963,20 @@ export type LiveTranslateConfigResponse = {
     activity_handling?: string[];
     turn_coverage?: string[];
     transcription?: string[];
+    source_voice_clone_modes?: string[];
+    source_voice_clone_execution?: Record<string, string>;
+    source_voice_clone_providers?: Record<string, {
+      label?: string;
+      execution_wired?: boolean;
+      credential_configured?: boolean;
+      credential_hint?: string;
+      profile_configured?: boolean;
+      profile_hint?: string;
+      required_secret_env?: string | null;
+      fallback_to?: string;
+      fallback_reason?: string;
+      status?: string;
+    }>;
     fixed?: Record<string, unknown>;
   };
   save_prefix: string;
@@ -999,6 +1013,76 @@ export type LiveTranslateSessionTokenResponse = {
   token_constraint_mode?: string;
   setup_shape?: string;
   client_send_gate?: string;
+};
+
+export type LiveTranslateClonePreflightResponse = {
+  status: string;
+  provider: string;
+  provider_label?: string;
+  provider_mode?: string | null;
+  target_language_code?: string;
+  ready?: boolean;
+  can_execute?: boolean;
+  fallback_active?: boolean;
+  fallback_to?: string | null;
+  fallback_reason?: string | null;
+  credential_configured?: boolean;
+  execution_wired?: boolean;
+  missing?: string[];
+  blockers?: string[];
+  next_steps?: string[];
+  checked_at?: string;
+  message?: string;
+};
+
+export type LiveTranslateClonePlanResponse = {
+  status: string;
+  bucket?: string;
+  session_id?: string;
+  prefix?: string;
+  plan?: Record<string, unknown>;
+  saved_paths?: string[];
+  message?: string;
+};
+
+export type LiveTranslateCloneExecuteResponse = {
+  status: string;
+  bucket?: string;
+  session_id?: string;
+  prefix?: string;
+  result?: Record<string, unknown>;
+  saved_paths?: string[];
+  message?: string;
+};
+
+export type LiveTranslateElevenLabsVoiceProfileResponse = {
+  status: string;
+  provider?: string;
+  speaker_email?: string;
+  voice_id?: string;
+  requires_verification?: boolean;
+  consent_version?: string;
+  session_id?: string;
+  prefix?: string;
+  source_audio_path?: string;
+  source_seconds?: number;
+  min_source_seconds?: number;
+  external_api_called?: boolean;
+  missing?: string[];
+  blockers?: string[];
+  next_steps?: string[];
+  fallback_reason?: string;
+  provider_http_status?: number;
+  provider_error_message?: string;
+  provider_error_sample?: string;
+  provider_error_code?: string;
+  provider_error_type?: string;
+  provider_error_status?: string;
+  voice_profile_result_path?: string;
+  saved_paths?: string[];
+  persist_error?: string;
+  created_at?: string;
+  message?: string;
 };
 
 export type LiveTranslateSegmentPayload = {
@@ -1038,12 +1122,18 @@ export type LiveTranslateSessionDetailResponse = {
   output_transcript: LiveTranslateSegmentPayload[] | null;
   frontend_log: Array<Record<string, unknown>> | null;
   backend_log: Record<string, unknown> | null;
+  clone_plan?: Record<string, unknown> | null;
+  clone_result?: Record<string, unknown> | null;
+  voice_profile_result?: Record<string, unknown> | null;
   source_audio_url: string | null;
   target_audio_url: string | null;
+  target_cloned_audio_url?: string | null;
   source_audio_base64?: string | null;
   target_audio_base64?: string | null;
+  target_cloned_audio_base64?: string | null;
   source_audio_mime_type?: string | null;
   target_audio_mime_type?: string | null;
+  target_cloned_audio_mime_type?: string | null;
 };
 
 export function fetchLiveTranslateConfig(): Promise<LiveTranslateConfigResponse> {
@@ -1055,6 +1145,51 @@ export function createLiveTranslateSessionToken(payload: {
   echo_target_language: boolean;
 }): Promise<LiveTranslateSessionTokenResponse> {
   return postJson<LiveTranslateSessionTokenResponse>('/api/console/live-translate/session-token', payload);
+}
+
+export function runLiveTranslateClonePreflight(payload: {
+  provider: string;
+  provider_mode?: string | null;
+  target_language_code?: string;
+  voice_alias?: string;
+}): Promise<LiveTranslateClonePreflightResponse> {
+  return postJson<LiveTranslateClonePreflightResponse>('/api/console/live-translate/source-voice-clone-preflight', payload);
+}
+
+export function prepareLiveTranslateClonePlan(payload: {
+  session_id: string;
+  provider: string;
+  provider_mode?: string | null;
+  target_language_code?: string;
+  voice_alias?: string;
+  consent_version?: string;
+  save_cloned_audio?: boolean;
+  fallback_to_live_translate_audio?: boolean;
+}): Promise<LiveTranslateClonePlanResponse> {
+  return postJson<LiveTranslateClonePlanResponse>('/api/console/live-translate/source-voice-clone-plan', payload);
+}
+
+export function executeLiveTranslateClone(payload: {
+  session_id: string;
+  provider: string;
+  provider_mode?: string | null;
+  target_language_code?: string;
+  voice_alias?: string;
+  consent_version?: string;
+  save_cloned_audio?: boolean;
+  fallback_to_live_translate_audio?: boolean;
+  client_context?: Record<string, unknown>;
+}): Promise<LiveTranslateCloneExecuteResponse> {
+  return postJson<LiveTranslateCloneExecuteResponse>('/api/console/live-translate/source-voice-clone-execute', payload);
+}
+
+export function createElevenLabsVoiceProfile(payload: {
+  session_id: string;
+  speaker_email: string;
+  consent_version: string;
+  remove_background_noise?: boolean;
+}): Promise<LiveTranslateElevenLabsVoiceProfileResponse> {
+  return postJson<LiveTranslateElevenLabsVoiceProfileResponse>('/api/console/live-translate/elevenlabs-voice-profile-create', payload);
 }
 
 export function saveLiveTranslateSession(payload: {
