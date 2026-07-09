@@ -47,6 +47,116 @@ def test_live_translate_config_returns_model(monkeypatch):
     assert clone_providers["elevenlabs"]["execution_wired"] is True
     assert clone_providers["elevenlabs"]["fallback_reason"] == "elevenlabs_api_key_missing"
     assert any(item["code"] == "fa" for item in payload["supported_languages"])
+    assert payload["runtime_settings_path"] == live_translate_routes.RUNTIME_SETTINGS_PATH
+
+
+def test_live_translate_runtime_settings_get_creates_default(monkeypatch):
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+    _login_user_zero(client, monkeypatch)
+    writes = {}
+
+    class FakeBlob:
+        def __init__(self, path):
+            self.path = path
+
+        def exists(self):
+            return self.path in writes
+
+        def download_as_text(self, encoding="utf-8"):
+            return writes[self.path]["data"]
+
+        def upload_from_string(self, data, content_type=None):
+            writes[self.path] = {"data": data, "content_type": content_type}
+
+    class FakeBucket:
+        def blob(self, path):
+            return FakeBlob(path)
+
+    class FakeStorageClient:
+        def bucket(self, name):
+            assert name == live_translate_routes.BUCKET_NAME
+            return FakeBucket()
+
+    monkeypatch.setattr(live_translate_routes, "_storage_client", FakeStorageClient)
+
+    response = client.get("/api/console/live-translate/runtime-settings?profile=ios")
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["created"] is True
+    assert payload["path"] == live_translate_routes.RUNTIME_SETTINGS_PATH
+    assert payload["effective_profile"] == "general"
+    assert payload["effective_settings"]["cloneSourceVoiceMode"] == "none"
+    assert live_translate_routes.RUNTIME_SETTINGS_PATH in writes
+    stored = json.loads(writes[live_translate_routes.RUNTIME_SETTINGS_PATH]["data"])
+    assert stored["profiles"]["general"]["audioChunkMs"] == 250
+
+
+def test_live_translate_runtime_settings_save_profile(monkeypatch):
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+    _login_user_zero(client, monkeypatch)
+    writes = {}
+
+    class FakeBlob:
+        def __init__(self, path):
+            self.path = path
+
+        def exists(self):
+            return self.path in writes
+
+        def download_as_text(self, encoding="utf-8"):
+            return writes[self.path]["data"]
+
+        def upload_from_string(self, data, content_type=None):
+            writes[self.path] = {"data": data, "content_type": content_type}
+
+    class FakeBucket:
+        def blob(self, path):
+            return FakeBlob(path)
+
+    class FakeStorageClient:
+        def bucket(self, name):
+            assert name == live_translate_routes.BUCKET_NAME
+            return FakeBucket()
+
+    monkeypatch.setattr(live_translate_routes, "_storage_client", FakeStorageClient)
+
+    response = client.post(
+        "/api/console/live-translate/runtime-settings",
+        json={
+            "profile_key": "ios",
+            "active_profile": "ios",
+            "settings": {
+                "targetLang": "fa",
+                "audioChunkMs": 300,
+                "cloneSourceVoiceMode": "elevenlabs",
+                "elevenLabsCloneMode": "transcript_tts",
+                "cloneVoiceAlias": "voice-123",
+                "cloneConsentVersion": "voice-consent-v1",
+            },
+            "elevenlabs_voice_profiles": [
+                {"email": "Speaker@Example.COM", "voice_id": "voice-123", "consent_version": "voice-consent-v1"}
+            ],
+        },
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["active_profile"] == "ios"
+    assert payload["effective_profile"] == "ios"
+    assert payload["effective_settings"]["targetLang"] == "fa"
+    assert payload["effective_settings"]["cloneSourceVoiceMode"] == "elevenlabs"
+    assert payload["document"]["elevenlabs_voice_profiles"][0]["email"] == "speaker@example.com"
+
+    response = client.get("/api/console/live-translate/runtime-settings?profile=ios")
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["effective_profile"] == "ios"
+    assert payload["effective_settings"]["cloneVoiceAlias"] == "voice-123"
 
 
 def test_live_translate_session_token_uses_safe_target(monkeypatch):
@@ -1025,3 +1135,88 @@ def test_live_translate_sessions_and_detail(monkeypatch):
     assert detail_payload["source_audio_base64"]
     assert detail_payload["source_audio_mime_type"] == "audio/wav"
     assert detail_payload["target_cloned_audio_mime_type"] == "audio/mpeg"
+
+
+def test_live_conversation_guard_requires_capability():
+    app = create_app()
+    client = app.test_client()
+
+    response = client.get("/api/console/live-translate/live-conversation-guard")
+
+    assert response.status_code == 403
+
+
+def test_live_conversation_guard_read_fails_without_supabase_env(monkeypatch):
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+    _login_user_zero(client, monkeypatch)
+    monkeypatch.delenv("PRG2_SUPABASE_URL", raising=False)
+    monkeypatch.delenv("PRG2_SUPABASE_SERVICE_ROLE_KEY", raising=False)
+
+    response = client.get("/api/console/live-translate/live-conversation-guard")
+
+    payload = response.get_json()
+    assert response.status_code == 502
+    assert payload["status"] == "error"
+    assert "guard read failed" in payload["message"]
+
+
+def test_live_conversation_guard_update_requires_boolean(monkeypatch):
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+    _login_user_zero(client, monkeypatch)
+
+    response = client.post(
+        "/api/console/live-translate/live-conversation-guard",
+        json={"enabled": "yes"},
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 400
+    assert payload["status"] == "error"
+
+
+def test_live_conversation_guard_update_toggles_and_logs(monkeypatch):
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+    _login_user_zero(client, monkeypatch)
+
+    monkeypatch.setattr(
+        live_translate_routes,
+        "_fetch_live_conversation_guard",
+        lambda: ({"enabled": True, "max_sessions_per_user_per_day": 20}, {
+            "enabled": True, "max_sessions_per_user_per_day": 20,
+            "max_session_seconds": 600, "updated_at": "t0", "version": 1,
+        }),
+    )
+    monkeypatch.setattr(
+        live_translate_routes,
+        "_update_live_conversation_guard_enabled",
+        lambda enabled: {
+            "enabled": enabled, "max_sessions_per_user_per_day": 20,
+            "max_session_seconds": 600, "updated_at": "t1", "version": 1,
+        },
+    )
+    appended = []
+
+    def _fake_append(entry):
+        appended.append(entry)
+        return appended
+
+    monkeypatch.setattr(live_translate_routes, "_append_guard_log", _fake_append)
+
+    response = client.post(
+        "/api/console/live-translate/live-conversation-guard",
+        json={"enabled": False},
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["guard"]["enabled"] is False
+    assert appended and appended[0]["enabled_before"] is True
+    assert appended[0]["enabled_after"] is False
+    assert appended[0]["ok"] is True

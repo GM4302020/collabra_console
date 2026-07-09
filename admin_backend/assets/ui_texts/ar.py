@@ -302,7 +302,7 @@ UI_TEXTS = {
     "MENU_DELETE_PERMANENTLY": "حذف نهائياً",
     "MENU_REFRESH_PAGE": "تحديث الصفحة",
     "MENU_LOG_OFF": "تسجيل الخروج",
-    "MENU_HARD_RELOAD": "الحصول على أحدث إصدار",
+    "MENU_HARD_RELOAD": "إعادة تحميل قسرية",
 
     # ==============================================
     # === 8. Auth, Registration, and Invitations ===
@@ -675,4 +675,30 @@ UI_TEXTS = {
     "API_ERROR_MODULE_ATTRIBUTE": "خطأ في خاصية الوحدة: {error}",
     "API_ERROR_INVITE_DELETE_WAITING_AUTH_USER_FAILED": "فشل قبل حذف الدعوة أثناء إزالة مستخدم المصادقة المنتظر.",
     "CHAT_ERROR_DB": "خطأ DB: {error}",
+
+    # ==============================================
+    # === Live Conversation (Request 69) ===
+    # ==============================================
+    "CHAT_LIVE_CONVERSATION": "",
+    "CHAT_LIVE_CONVERSATION_ARIA": "",
+    "LIVE_CONV_START": "",
+    "LIVE_CONV_STOP": "",
+    "LIVE_CONV_CLOSE": "",
+    "LIVE_CONV_STATUS_READY": "",
+    "LIVE_CONV_STATUS_CONNECTING": "",
+    "LIVE_CONV_STATUS_LISTENING": "",
+    "LIVE_CONV_STATUS_TRANSLATING": "",
+    "LIVE_CONV_STATUS_FINISHING": "",
+    "LIVE_CONV_STATUS_STOPPED": "",
+    "LIVE_CONV_TURN_SENDING": "",
+    "LIVE_CONV_TURN_SENT": "",
+    "LIVE_CONV_TURN_FAILED": "",
+    "LIVE_CONV_EMPTY_HINT": "",
+    "LIVE_CONV_DISCLAIMER": "",
+    "LIVE_CONV_ERROR_DISABLED": "",
+    "LIVE_CONV_ERROR_DAILY_LIMIT": "",
+    "LIVE_CONV_ERROR_MIC": "",
+    "LIVE_CONV_ERROR_CONNECTION": "",
+    "LIVE_CONV_ERROR_TURN_MESSAGE_AUDIO_REQUIRED": "",
+    "LIVE_CONV_ERROR_TURN_MESSAGE_CONVERSATION_REQUIRED": "",
 }

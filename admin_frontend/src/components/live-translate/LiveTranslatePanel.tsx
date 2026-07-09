@@ -10,6 +10,7 @@ import {
   fetchLiveTranslateSessionDetail,
   fetchLiveTranslateSessions,
   fetchLiveTranslateConfig,
+  fetchLiveTranslateRuntimeSettings,
   executeLiveTranslateClone,
   runLiveTranslateClonePreflight,
   prepareLiveTranslateClonePlan,
@@ -17,12 +18,16 @@ import {
   LiveTranslateConfigResponse,
   LiveTranslateClonePlanResponse,
   LiveTranslateClonePreflightResponse,
+  LiveTranslateRuntimeSettingsResponse,
   LiveTranslateSaveResponse,
   LiveTranslateSavedSession,
   LiveTranslateSessionDetailResponse,
   LiveTranslateSegmentPayload,
   saveConsoleDashboardSettingsSection,
   saveLiveTranslateSession,
+  saveLiveTranslateRuntimeSettings,
+  fetchLiveConversationGuard,
+  updateLiveConversationGuard,
 } from '../../api/consoleApi';
 import {
   base64ToInt16,
@@ -91,6 +96,8 @@ type WaitIndicator = {
   endsAt?: number;
 };
 
+type ProfileNoticeTone = 'info' | 'success' | 'warning' | 'danger';
+
 type SettingsProfileKey = 'general' | 'ios' | 'android' | 'windows' | 'macos' | 'linux' | 'other';
 
 type RuntimeSettingsSnapshot = typeof DEFAULT_RUNTIME_SETTINGS & {
@@ -112,9 +119,6 @@ type ElevenLabsVoiceProfile = {
 
 type PersistedWorkspaceState = {
   last_session_id?: string | null;
-  active_settings_profile?: SettingsProfileKey;
-  runtime_settings?: RuntimeSettingsSnapshot;
-  elevenlabs_voice_profiles?: ElevenLabsVoiceProfile[];
   updated_at?: string;
 };
 
@@ -462,6 +466,12 @@ export default function LiveTranslatePanel() {
   const [voiceProfileStatus, setVoiceProfileStatus] = useState('idle');
   const [activeSettingsProfile, setActiveSettingsProfile] = useState<SettingsProfileKey>(() => readOptionSetting('lt_active_settings_profile', 'general', SETTINGS_PROFILE_KEYS));
   const [lastProfileNotice, setLastProfileNotice] = useState('');
+  const [lastProfileNoticeTone, setLastProfileNoticeTone] = useState<ProfileNoticeTone>('info');
+  const [liveConvGuardEnabled, setLiveConvGuardEnabled] = useState<boolean | null>(null);
+  const [liveConvGuardBusy, setLiveConvGuardBusy] = useState(false);
+  const [liveConvGuardUpdatedAt, setLiveConvGuardUpdatedAt] = useState<string>('');
+  const [liveConvGuardNotice, setLiveConvGuardNotice] = useState<string>('');
+  const [liveConvGuardNoticeTone, setLiveConvGuardNoticeTone] = useState<ProfileNoticeTone>('info');
   const [status, setStatus] = useState<StreamStatus>('idle');
   const [inputSegments, setInputSegments] = useState<Segment[]>([]);
   const [outputSegments, setOutputSegments] = useState<Segment[]>([]);
@@ -514,6 +524,69 @@ export default function LiveTranslatePanel() {
     if (eventLogRef.current.length > 500) eventLogRef.current.shift();
   }
 
+  async function refreshLiveConversationGuard(reason: string) {
+    setLiveConvGuardBusy(true);
+    recordEvent('live_conversation_guard.read_requested', { reason });
+    try {
+      const data = await fetchLiveConversationGuard();
+      const enabled = Boolean(data.guard?.enabled);
+      setLiveConvGuardEnabled(enabled);
+      setLiveConvGuardUpdatedAt(String(data.guard?.updated_at || ''));
+      setLiveConvGuardNotice(enabled ? 'Feature is ON for app users.' : 'Feature is OFF — new app sessions are blocked.');
+      setLiveConvGuardNoticeTone(enabled ? 'success' : 'warning');
+      recordEvent('live_conversation_guard.read_result', {
+        reason,
+        enabled,
+        updated_at: data.guard?.updated_at,
+        guard_log_tail: (data.log || []).slice(-3),
+      });
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : String(exc);
+      setLiveConvGuardNotice(`Read failed: ${message}`);
+      setLiveConvGuardNoticeTone('danger');
+      recordEvent('live_conversation_guard.read_failed', { reason, message });
+    } finally {
+      setLiveConvGuardBusy(false);
+    }
+  }
+
+  async function toggleLiveConversationGuard() {
+    if (liveConvGuardEnabled === null || liveConvGuardBusy) return;
+    const requested = !liveConvGuardEnabled;
+    setLiveConvGuardBusy(true);
+    recordEvent('live_conversation_guard.toggle_requested', {
+      enabled_before: liveConvGuardEnabled,
+      requested_enabled: requested,
+    });
+    try {
+      const data = await updateLiveConversationGuard(requested);
+      const enabled = Boolean(data.guard?.enabled);
+      setLiveConvGuardEnabled(enabled);
+      setLiveConvGuardUpdatedAt(String(data.guard?.updated_at || ''));
+      setLiveConvGuardNotice(enabled
+        ? 'Applied: Live Conversation is ON — app users can start sessions now.'
+        : 'Applied: Live Conversation is OFF — token issuing stopped instantly; running sessions end at token expiry.');
+      setLiveConvGuardNoticeTone(enabled ? 'success' : 'warning');
+      recordEvent('live_conversation_guard.toggle_result', {
+        ok: true,
+        enabled_after: enabled,
+        guard_log_tail: (data.log || []).slice(-3),
+      });
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : String(exc);
+      setLiveConvGuardNotice(`Change failed — state unchanged. ${message}`);
+      setLiveConvGuardNoticeTone('danger');
+      recordEvent('live_conversation_guard.toggle_failed', { requested_enabled: requested, message });
+    } finally {
+      setLiveConvGuardBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshLiveConversationGuard('panel_mount');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function beginWait(label: string, durationMs?: number, detail?: string, tone: WaitIndicator['tone'] = 'warning') {
     const startedAt = Date.now();
     setClockMs(startedAt);
@@ -528,6 +601,11 @@ export default function LiveTranslatePanel() {
 
   function clearWait() {
     setWaitIndicator(null);
+  }
+
+  function setProfileNotice(message: string, tone: ProfileNoticeTone = 'info') {
+    setLastProfileNotice(message);
+    setLastProfileNoticeTone(tone);
   }
 
   function applyRuntimeSettings(settings: Record<string, unknown>, options?: { persistTarget?: boolean }) {
@@ -666,7 +744,10 @@ export default function LiveTranslatePanel() {
       ...elevenLabsVoiceProfiles.filter((item) => item.email !== normalizedEmail),
     ].sort((left, right) => left.email.localeCompare(right.email, 'en', { sensitivity: 'base' }));
     setElevenLabsVoiceProfiles(next);
-    persistWorkspaceState(next);
+    void persistRuntimeSettingsFile(activeSettingsProfile, next, {
+      cloneVoiceAlias: nextProfile.voice_id,
+      cloneConsentVersion: nextProfile.consent_version || cloneConsentVersion,
+    });
     return next;
   }
 
@@ -952,60 +1033,115 @@ export default function LiveTranslatePanel() {
     }
   }
 
-  function saveSettingsProfile(profileKey: SettingsProfileKey) {
-    const snapshot = currentRuntimeSettings(profileKey);
+  function cacheSettingsProfile(profileKey: SettingsProfileKey, snapshot: RuntimeSettingsSnapshot) {
     window.localStorage.setItem(profileStorageKey(profileKey), JSON.stringify(snapshot));
-    setActiveSettingsProfile(profileKey);
-    setLastProfileNotice(`Saved ${snapshot.profileLabel} settings`);
-    recordEvent('settings.profile_saved', {
+  }
+
+  function applyRuntimeSettingsResponse(response: LiveTranslateRuntimeSettingsResponse) {
+    const effectiveSettings = isRecord(response.effective_settings) ? response.effective_settings : {};
+    if (Object.keys(effectiveSettings).length) {
+      applyRuntimeSettings(effectiveSettings);
+      cacheSettingsProfile((response.effective_profile as SettingsProfileKey) || 'general', effectiveSettings as RuntimeSettingsSnapshot);
+    }
+    const profileKey = String(response.requested_profile || response.active_profile || response.effective_profile || '');
+    if (SETTINGS_PROFILE_KEYS.includes(profileKey as SettingsProfileKey)) {
+      setActiveSettingsProfile(profileKey as SettingsProfileKey);
+    }
+    const savedVoiceProfiles = parseElevenLabsVoiceProfiles(response.document?.elevenlabs_voice_profiles);
+    setElevenLabsVoiceProfiles(savedVoiceProfiles);
+    if (!cloneVoiceAlias && savedVoiceProfiles.length > 0) {
+      setElevenLabsVoiceEmail(savedVoiceProfiles[0].email);
+      setCloneVoiceAlias(savedVoiceProfiles[0].voice_id);
+      if (savedVoiceProfiles[0].consent_version) setCloneConsentVersion(savedVoiceProfiles[0].consent_version);
+    }
+  }
+
+  async function persistRuntimeSettingsFile(
+    profileKey = activeSettingsProfile,
+    voiceProfiles = elevenLabsVoiceProfiles,
+    overrides: Partial<RuntimeSettingsSnapshot> = {},
+  ) {
+    const snapshot = { ...currentRuntimeSettings(profileKey), ...overrides };
+    cacheSettingsProfile(profileKey, snapshot);
+    return saveLiveTranslateRuntimeSettings({
       profile_key: profileKey,
-      profile_label: snapshot.profileLabel,
-      saved_at: snapshot.savedAt,
+      active_profile: profileKey,
+      settings: snapshot as Record<string, unknown>,
+      elevenlabs_voice_profiles: voiceProfiles as unknown as Array<Record<string, unknown>>,
     });
   }
 
-  function loadSettingsProfile(profileKey: SettingsProfileKey) {
-    const snapshot = readStoredSettingsProfile(profileKey);
-    if (!snapshot) {
-      setLastProfileNotice(`${profileLabel(profileKey)} settings not saved yet`);
-      recordEvent('settings.profile_missing', { profile_key: profileKey, profile_label: profileLabel(profileKey) });
-      return;
-    }
-    applyRuntimeSettings(snapshot);
+  async function saveSettingsProfile(profileKey: SettingsProfileKey) {
+    const snapshot = currentRuntimeSettings(profileKey);
+    cacheSettingsProfile(profileKey, snapshot);
     setActiveSettingsProfile(profileKey);
-    setLastProfileNotice(`Loaded ${snapshot.profileLabel} settings`);
-    recordEvent('settings.profile_loaded', {
-      profile_key: profileKey,
-      profile_label: snapshot.profileLabel,
-      saved_at: snapshot.savedAt,
-    });
+    try {
+      const response = await saveLiveTranslateRuntimeSettings({
+        profile_key: profileKey,
+        active_profile: profileKey,
+        settings: snapshot as Record<string, unknown>,
+        elevenlabs_voice_profiles: elevenLabsVoiceProfiles as unknown as Array<Record<string, unknown>>,
+      });
+      applyRuntimeSettingsResponse(response);
+      setProfileNotice(`Saved ${snapshot.profileLabel} settings to GCS`, 'success');
+      recordEvent('settings.profile_saved', {
+        profile_key: profileKey,
+        profile_label: snapshot.profileLabel,
+        saved_at: snapshot.savedAt,
+        path: response.path,
+      });
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : String(exc);
+      setProfileNotice(`Save ${snapshot.profileLabel} failed: ${message}`, 'danger');
+      recordEvent('settings.profile_save_failed', { profile_key: profileKey, message });
+    }
+  }
+
+  async function loadSettingsProfile(profileKey: SettingsProfileKey) {
+    try {
+      const response = await fetchLiveTranslateRuntimeSettings(profileKey);
+      applyRuntimeSettingsResponse(response);
+      const effectiveProfile = response.effective_profile as SettingsProfileKey;
+      const effectiveLabel = profileLabel(effectiveProfile);
+      if (effectiveProfile === profileKey) {
+        setProfileNotice(`Loaded ${effectiveLabel} settings from GCS`, 'success');
+      } else {
+        setProfileNotice(`${profileLabel(profileKey)} not found; loaded ${effectiveLabel} fallback from GCS`, 'warning');
+      }
+      recordEvent('settings.profile_loaded', {
+        requested_profile: profileKey,
+        effective_profile: response.effective_profile,
+        path: response.path,
+      });
+    } catch (exc) {
+      const cached = readStoredSettingsProfile(profileKey);
+      const message = exc instanceof Error ? exc.message : String(exc);
+      if (cached) {
+        applyRuntimeSettings(cached);
+        setActiveSettingsProfile(profileKey);
+        setProfileNotice(`Loaded cached ${cached.profileLabel} settings; GCS failed`, 'warning');
+        recordEvent('settings.profile_cache_loaded_after_gcs_failed', { profile_key: profileKey, message });
+        return;
+      }
+      setProfileNotice(`${profileLabel(profileKey)} settings unavailable: ${message}`, 'danger');
+      recordEvent('settings.profile_load_failed', { profile_key: profileKey, message });
+    }
   }
 
   function restoreDefaultSettings() {
     applyRuntimeSettings(DEFAULT_RUNTIME_SETTINGS);
     setActiveSettingsProfile('general');
-    setLastProfileNotice('Loaded default runtime settings');
+    setProfileNotice('Loaded default runtime settings', 'info');
     recordEvent('settings.defaults_loaded', DEFAULT_RUNTIME_SETTINGS);
   }
 
   async function loadPersistedWorkspaceState() {
     try {
+      const runtimeResponse = await fetchLiveTranslateRuntimeSettings();
+      applyRuntimeSettingsResponse(runtimeResponse);
       const response = await fetchConsoleDashboardSettings();
       const section = response.settings[DASHBOARD_SETTINGS_SECTION];
       if (!isRecord(section)) return lastSessionId;
-      const runtimeSettings = isRecord(section.runtime_settings) ? section.runtime_settings : {};
-      if (Object.keys(runtimeSettings).length) applyRuntimeSettings(runtimeSettings);
-      const savedVoiceProfiles = parseElevenLabsVoiceProfiles(section.elevenlabs_voice_profiles);
-      setElevenLabsVoiceProfiles(savedVoiceProfiles);
-      if (!cloneVoiceAlias && savedVoiceProfiles.length > 0) {
-        setElevenLabsVoiceEmail(savedVoiceProfiles[0].email);
-        setCloneVoiceAlias(savedVoiceProfiles[0].voice_id);
-        if (savedVoiceProfiles[0].consent_version) setCloneConsentVersion(savedVoiceProfiles[0].consent_version);
-      }
-      const profileKey = String(section.active_settings_profile || runtimeSettings.profileKey || '');
-      if (SETTINGS_PROFILE_KEYS.includes(profileKey as SettingsProfileKey)) {
-        setActiveSettingsProfile(profileKey as SettingsProfileKey);
-      }
       const savedSessionId = typeof section.last_session_id === 'string' && section.last_session_id.trim()
         ? section.last_session_id.trim()
         : lastSessionId;
@@ -1013,8 +1149,8 @@ export default function LiveTranslatePanel() {
       recordEvent('settings.dashboard_loaded', {
         section: DASHBOARD_SETTINGS_SECTION,
         last_session_id: savedSessionId || null,
-        has_runtime_settings: Object.keys(runtimeSettings).length > 0,
-        voice_profile_count: savedVoiceProfiles.length,
+        runtime_settings_path: runtimeResponse.path,
+        active_profile: runtimeResponse.active_profile,
       });
       return savedSessionId || null;
     } catch (exc) {
@@ -1025,22 +1161,19 @@ export default function LiveTranslatePanel() {
     }
   }
 
-  function persistedWorkspacePayload(nextSessionId = lastSessionId || saved?.session_id || null, voiceProfiles = elevenLabsVoiceProfiles): PersistedWorkspaceState {
+  function persistedWorkspacePayload(nextSessionId = lastSessionId || saved?.session_id || null): PersistedWorkspaceState {
     return {
       last_session_id: nextSessionId,
-      active_settings_profile: activeSettingsProfile,
-      runtime_settings: currentRuntimeSettings(activeSettingsProfile),
-      elevenlabs_voice_profiles: voiceProfiles,
       updated_at: new Date().toISOString(),
     };
   }
 
-  function persistWorkspaceState(voiceProfiles = elevenLabsVoiceProfiles) {
+  function persistWorkspaceState() {
     const nextSessionId = lastSessionId || saved?.session_id || null;
     window.localStorage.setItem('lt_last_session_id', nextSessionId || '');
-    const payload = persistedWorkspacePayload(nextSessionId, voiceProfiles);
+    const payload = persistedWorkspacePayload(nextSessionId);
     saveConsoleDashboardSettingsSection(DASHBOARD_SETTINGS_SECTION, payload as Record<string, unknown>)
-      .then(() => recordEvent('settings.dashboard_saved', { last_session_id: nextSessionId, voice_profile_count: voiceProfiles.length }))
+      .then(() => recordEvent('settings.dashboard_saved', { last_session_id: nextSessionId }))
       .catch((exc) => recordEvent('settings.dashboard_save_failed', { message: exc instanceof Error ? exc.message : String(exc) }));
   }
 
@@ -1064,7 +1197,7 @@ export default function LiveTranslatePanel() {
       if (ignore) return;
       preferredSessionId = await loadPersistedWorkspaceState();
       if (ignore) return;
-      await loadSavedSessions(preferredSessionId || undefined, { autoSelectLatest: !preferredSessionId });
+      await loadSavedSessions(preferredSessionId || undefined, { autoSelectLatest: Boolean(preferredSessionId) });
     }
     void init();
     return () => { ignore = true; cleanup(); };
@@ -1271,6 +1404,11 @@ export default function LiveTranslatePanel() {
     setCloneExecution(null);
     setCloneExecutionStatus('idle');
     setError(null);
+    setLastSessionId(null);
+    window.localStorage.setItem('lt_last_session_id', '');
+    saveConsoleDashboardSettingsSection(DASHBOARD_SETTINGS_SECTION, persistedWorkspacePayload(null) as Record<string, unknown>)
+      .then(() => recordEvent('settings.dashboard_session_cleared', { reason: 'new_session' }))
+      .catch((exc) => recordEvent('settings.dashboard_session_clear_failed', { message: exc instanceof Error ? exc.message : String(exc) }));
     setMonitor(defaultMonitor());
     setStatus('idle');
   }
@@ -1964,7 +2102,7 @@ export default function LiveTranslatePanel() {
     }
     if (SETTINGS_PROFILE_KEYS.includes(settingsProfile.key as SettingsProfileKey)) {
       setActiveSettingsProfile(settingsProfile.key as SettingsProfileKey);
-      setLastProfileNotice(`Restored ${settingsProfile.label || profileLabel(settingsProfile.key as SettingsProfileKey)} profile from session`);
+      setProfileNotice(`Restored ${settingsProfile.label || profileLabel(settingsProfile.key as SettingsProfileKey)} profile from session`, 'info');
     }
     setMonitor({
       ...defaultMonitor(),
@@ -2229,7 +2367,7 @@ export default function LiveTranslatePanel() {
               ))}
             </select>
           </label>
-          <button className="console-secondary-button" disabled={settingsLocked} onClick={() => loadSettingsProfile(activeSettingsProfile)} type="button">
+          <button className="console-secondary-button" disabled={settingsLocked} onClick={() => void loadSettingsProfile(activeSettingsProfile)} type="button">
             Load profile
           </button>
           <div className="live-translate-profile-saves">
@@ -2238,14 +2376,14 @@ export default function LiveTranslatePanel() {
                 className="console-secondary-button"
                 disabled={settingsLocked}
                 key={profile.key}
-                onClick={() => saveSettingsProfile(profile.key)}
+                onClick={() => void saveSettingsProfile(profile.key)}
                 type="button"
               >
                 Save {profile.label}
               </button>
             ))}
           </div>
-          {lastProfileNotice && <small>{lastProfileNotice}</small>}
+          {lastProfileNotice && <small className={`live-translate-profile-notice live-translate-profile-notice-${lastProfileNoticeTone}`}>{lastProfileNotice}</small>}
         </div>
         <div className={`live-translate-clone-panel ${cloneSourceVoiceMode === 'none' ? 'off' : 'active'}`}>
           <div className="live-translate-clone-head">
@@ -2409,6 +2547,47 @@ export default function LiveTranslatePanel() {
               </small>
             </>
           )}
+        </div>
+        <div className={`live-translate-clone-panel ${liveConvGuardEnabled ? 'active' : 'off'}`}>
+          <div className="live-translate-clone-head">
+            <div>
+              <strong>Live Conversation kill switch</strong>
+              <span>
+                {liveConvGuardEnabled === null
+                  ? 'Reading current state from config_domain_registry…'
+                  : liveConvGuardEnabled
+                    ? 'ON — Collabra app users can start Live Conversation sessions.'
+                    : 'OFF — new app sessions are blocked instantly (users see a clear English message).'}
+              </span>
+            </div>
+            <span>{liveConvGuardUpdatedAt ? `Updated: ${liveConvGuardUpdatedAt}` : ''}</span>
+          </div>
+          <div className="live-translate-profile-row">
+            <label className="live-translate-setting-tip" data-tip="Emergency kill switch for the in-app Live Conversation feature. It flips live_conversation_guard.enabled in the database — no deploy or code change needed, safe to toggle anytime. OFF: token issuing stops immediately for all app users; sessions already running end within minutes when their token expires; no data is lost. ON: the feature is restored instantly. Every change (who, when, before/after, errors) is written to the guard log and appears in frontend_log.json and backend_log.json of saved sessions.">
+              <span>Kill switch</span>
+            </label>
+            <button
+              className="console-secondary-button"
+              disabled={liveConvGuardBusy || liveConvGuardEnabled === null}
+              onClick={() => void toggleLiveConversationGuard()}
+              type="button"
+            >
+              {liveConvGuardBusy ? 'Applying…' : liveConvGuardEnabled ? 'Turn OFF (block new sessions)' : 'Turn ON (allow sessions)'}
+            </button>
+            <button
+              className="console-secondary-button"
+              disabled={liveConvGuardBusy}
+              onClick={() => void refreshLiveConversationGuard('manual_refresh')}
+              type="button"
+            >
+              Refresh
+            </button>
+            {liveConvGuardNotice && (
+              <small className={`live-translate-profile-notice live-translate-profile-notice-${liveConvGuardNoticeTone}`}>
+                {liveConvGuardNotice}
+              </small>
+            )}
+          </div>
         </div>
         <div className="live-translate-settings-grid">
         <label className="live-translate-setting-tip" data-tip="Client-side PCM packet duration. Range: 100-500ms. Larger values can improve continuity but increase latency.">

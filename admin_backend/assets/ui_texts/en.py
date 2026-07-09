@@ -675,4 +675,30 @@ UI_TEXTS = {
     "API_ERROR_MODULE_ATTRIBUTE": "Module Attribute Error: {error}",
     "API_ERROR_INVITE_DELETE_WAITING_AUTH_USER_FAILED": "Failed before invitation deletion while removing waiting auth user.",
     "CHAT_ERROR_DB": "DB Error: {error}",
+
+    # ==============================================
+    # === Live Conversation (Request 69) ===
+    # ==============================================
+    "CHAT_LIVE_CONVERSATION": "Live Conversation",
+    "CHAT_LIVE_CONVERSATION_ARIA": "Live conversation",
+    "LIVE_CONV_START": "Start",
+    "LIVE_CONV_STOP": "Stop",
+    "LIVE_CONV_CLOSE": "Close",
+    "LIVE_CONV_STATUS_READY": "Ready to start",
+    "LIVE_CONV_STATUS_CONNECTING": "Connecting...",
+    "LIVE_CONV_STATUS_LISTENING": "Listening...",
+    "LIVE_CONV_STATUS_TRANSLATING": "Translating...",
+    "LIVE_CONV_STATUS_FINISHING": "Finishing...",
+    "LIVE_CONV_STATUS_STOPPED": "Stopped",
+    "LIVE_CONV_TURN_SENDING": "Sending...",
+    "LIVE_CONV_TURN_SENT": "Sent",
+    "LIVE_CONV_TURN_FAILED": "Send failed",
+    "LIVE_CONV_EMPTY_HINT": "Press Start and speak. Each pause sends a translated voice message.",
+    "LIVE_CONV_DISCLAIMER": "Translated voice is a model voice, not a clone of the speaker.",
+    "LIVE_CONV_ERROR_DISABLED": "Live Conversation is currently disabled.",
+    "LIVE_CONV_ERROR_DAILY_LIMIT": "Daily Live Conversation limit reached.",
+    "LIVE_CONV_ERROR_MIC": "Microphone access is required.",
+    "LIVE_CONV_ERROR_CONNECTION": "Connection failed. Please try again.",
+    "LIVE_CONV_ERROR_TURN_MESSAGE_AUDIO_REQUIRED": "Turn audio file is required.",
+    "LIVE_CONV_ERROR_TURN_MESSAGE_CONVERSATION_REQUIRED": "conversation_id is required.",
 }

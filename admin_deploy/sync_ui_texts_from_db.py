@@ -53,15 +53,22 @@ def fetch_registry_texts(url: str, key: str) -> dict:
     query = urllib.parse.urlencode(
         {
             "select": "scope_ref,payload",
-            "domain_key": "like.ui_texts_%",
+            # PostgREST الگوی like را با * می‌گیرد؛ % خام در URL نامعتبر است و 500 می‌دهد
+            "domain_key": "like.ui_texts_*",
             "scope_kind": "eq.language",
             "is_active": "eq.true",
         },
-        safe=",().*%",
+        safe=",().*",
     )
     request = urllib.request.Request(
         f"{url.rstrip('/')}/rest/v1/config_domain_registry?{query}",
-        headers={"apikey": key, "Authorization": f"Bearer {key}", "Accept": "application/json"},
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Accept": "application/json",
+            # UA پیش‌فرض Python-urllib توسط WAF کلادفلر روی db.otmega.com با 403 بلاک می‌شود
+            "User-Agent": "otmega-ui-texts-sync/1.0",
+        },
         method="GET",
     )
     with urllib.request.urlopen(request, timeout=20) as response:

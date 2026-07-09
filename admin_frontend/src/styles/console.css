@@ -4701,6 +4701,36 @@ button {
   font-size: 0.74rem;
 }
 
+.live-translate-profile-notice {
+  border: 1px solid var(--console-border);
+  border-radius: 6px;
+  padding: 0.25rem 0.45rem;
+}
+
+.live-translate-profile-row .live-translate-profile-notice-success {
+  background: rgba(32, 184, 109, 0.12);
+  border-color: rgba(32, 184, 109, 0.52);
+  color: #20b86d;
+}
+
+.live-translate-profile-row .live-translate-profile-notice-warning {
+  background: rgba(211, 145, 32, 0.13);
+  border-color: rgba(211, 145, 32, 0.55);
+  color: #d39120;
+}
+
+.live-translate-profile-row .live-translate-profile-notice-danger {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #ef4444;
+}
+
+.live-translate-profile-row .live-translate-profile-notice-info {
+  background: rgba(116, 138, 168, 0.12);
+  border-color: rgba(116, 138, 168, 0.42);
+  color: var(--console-muted);
+}
+
 .live-translate-clone-panel {
   background: var(--console-panel);
   border: 1px solid rgba(32, 184, 109, 0.42);

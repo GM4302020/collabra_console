@@ -980,6 +980,7 @@ export type LiveTranslateConfigResponse = {
     fixed?: Record<string, unknown>;
   };
   save_prefix: string;
+  runtime_settings_path?: string;
   auth?: {
     token_strategy: string;
     connect_api_version: string;
@@ -1099,6 +1100,28 @@ export type LiveTranslateSaveResponse = {
   saved_paths: string[];
 };
 
+export type LiveTranslateRuntimeSettingsResponse = {
+  status: string;
+  bucket: string;
+  path: string;
+  created?: boolean;
+  requested_profile?: string | null;
+  active_profile: string;
+  effective_profile: string;
+  effective_settings: Record<string, unknown>;
+  document: {
+    schema_version?: number;
+    updated_at?: string | null;
+    updated_by?: string | null;
+    active_profile?: string;
+    fallback_order?: string[];
+    runtime_contract?: Record<string, unknown>;
+    profiles?: Record<string, Record<string, unknown>>;
+    elevenlabs_voice_profiles?: Array<Record<string, unknown>>;
+  };
+  message?: string;
+};
+
 export type LiveTranslateSavedSession = {
   session_id: string;
   prefix: string;
@@ -1138,6 +1161,20 @@ export type LiveTranslateSessionDetailResponse = {
 
 export function fetchLiveTranslateConfig(): Promise<LiveTranslateConfigResponse> {
   return getJson<LiveTranslateConfigResponse>('/api/console/live-translate/config');
+}
+
+export function fetchLiveTranslateRuntimeSettings(profile?: string): Promise<LiveTranslateRuntimeSettingsResponse> {
+  const suffix = profile ? `?profile=${encodeURIComponent(profile)}` : '';
+  return getJson<LiveTranslateRuntimeSettingsResponse>(`/api/console/live-translate/runtime-settings${suffix}`);
+}
+
+export function saveLiveTranslateRuntimeSettings(payload: {
+  profile_key: string;
+  active_profile?: string;
+  settings: Record<string, unknown>;
+  elevenlabs_voice_profiles?: Array<Record<string, unknown>>;
+}): Promise<LiveTranslateRuntimeSettingsResponse> {
+  return postJson<LiveTranslateRuntimeSettingsResponse>('/api/console/live-translate/runtime-settings', payload);
 }
 
 export function createLiveTranslateSessionToken(payload: {
@@ -1212,4 +1249,39 @@ export function fetchLiveTranslateSessions(limit = 10): Promise<LiveTranslateSes
 
 export function fetchLiveTranslateSessionDetail(sessionId: string): Promise<LiveTranslateSessionDetailResponse> {
   return getJson<LiveTranslateSessionDetailResponse>(`/api/console/live-translate/session/${encodeURIComponent(sessionId)}`);
+}
+
+// ─── Live Conversation guard (kill switch) — Request 69 / doc 1004-0133 ─────
+
+export type LiveConversationGuard = {
+  enabled: boolean;
+  max_sessions_per_user_per_day?: number | null;
+  max_session_seconds?: number | null;
+  updated_at?: string | null;
+  version?: number | null;
+};
+
+export type LiveConversationGuardResponse = {
+  status: string;
+  message?: string;
+  guard?: LiveConversationGuard;
+  log?: Array<Record<string, unknown>>;
+};
+
+export function fetchLiveConversationGuard(): Promise<LiveConversationGuardResponse> {
+  return getJson<LiveConversationGuardResponse>('/api/console/live-translate/live-conversation-guard');
+}
+
+export async function updateLiveConversationGuard(enabled: boolean): Promise<LiveConversationGuardResponse> {
+  const response = await fetch('/api/console/live-translate/live-conversation-guard', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  const data = await response.json().catch(() => null) as LiveConversationGuardResponse | null;
+  if (!response.ok || !data || data.status !== 'ok') {
+    throw new Error(data?.message ?? `live-conversation-guard update failed ${response.status}`);
+  }
+  return data;
 }

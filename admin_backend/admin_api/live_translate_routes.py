@@ -7,11 +7,14 @@ import logging
 import os
 import re
 import time
+import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 
+from admin_api.auth import resolve_actor
 from admin_api.guards import require_capability
 
 live_translate_bp = Blueprint("console_live_translate", __name__)
@@ -21,6 +24,7 @@ MODEL_NAME = "gemini-3.5-live-translate-preview"
 MODEL_RESOURCE = f"models/{MODEL_NAME}"
 BUCKET_NAME = os.environ.get("APP_DATA_BUCKET_NAME", "otmega-collabra-secure")
 SESSION_PREFIX = "advisors/collabra-20018-v1.0.0/main-data/live-translate-sessions"
+RUNTIME_SETTINGS_PATH = "advisors/collabra-20018-v1.0.0/main-data/live-translate-runtime-settings.json"
 TOKEN_TIMEOUT_SECONDS = int(os.environ.get("LIVE_TRANSLATE_TOKEN_TIMEOUT_SECONDS", "20"))
 TOKEN_EXPIRE_SECONDS = int(os.environ.get("LIVE_TRANSLATE_TOKEN_EXPIRE_SECONDS", "1800"))
 TOKEN_NEW_SESSION_EXPIRE_SECONDS = int(os.environ.get("LIVE_TRANSLATE_NEW_SESSION_EXPIRE_SECONDS", "300"))
@@ -128,6 +132,30 @@ SUPPORTED_LANGUAGES = [
     {"code": "zu", "label": "Zulu"},
 ]
 SUPPORTED_LANGUAGE_CODES = {item["code"].lower(): item["code"] for item in SUPPORTED_LANGUAGES}
+SETTINGS_PROFILE_KEYS = {"general", "ios", "android", "windows", "macos", "linux", "other"}
+DEFAULT_RUNTIME_SETTINGS = {
+    "targetLang": "en",
+    "echoTarget": False,
+    "inputTranscriptEnabled": True,
+    "outputTranscriptEnabled": True,
+    "audioChunkMs": 250,
+    "responseDrainMs": 6000,
+    "silenceDurationMs": 900,
+    "prefixPaddingMs": 250,
+    "startSensitivity": "START_SENSITIVITY_HIGH",
+    "endSensitivity": "END_SENSITIVITY_LOW",
+    "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
+    "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY",
+    "cloneSourceVoiceMode": "none",
+    "googleCloneMode": "chirp_instant_custom_voice",
+    "elevenLabsCloneMode": "speech_to_speech",
+    "cloneSaveAudio": True,
+    "cloneFallbackToLiveTranslate": True,
+    "cloneVoiceAlias": "",
+    "cloneConsentVersion": "",
+    "profileKey": "general",
+    "profileLabel": "General",
+}
 
 
 def _now_iso() -> str:
@@ -137,6 +165,207 @@ def _now_iso() -> str:
 def _safe_language(value: object, default: str = "en") -> str:
     code = str(value or "").strip().lower()
     return SUPPORTED_LANGUAGE_CODES.get(code, default)
+
+
+def _safe_settings_profile_key(value: object, default: str = "general") -> str:
+    key = str(value or "").strip().lower()
+    return key if key in SETTINGS_PROFILE_KEYS else default
+
+
+def _profile_label(profile_key: str) -> str:
+    labels = {
+        "general": "General",
+        "ios": "iOS",
+        "android": "Android",
+        "windows": "Windows",
+        "macos": "macOS",
+        "linux": "Linux",
+        "other": "Other OS",
+    }
+    return labels.get(profile_key, profile_key)
+
+
+def _clamp_number(value: object, fallback: int, minimum: int, maximum: int) -> int:
+    try:
+        numeric = int(float(value))
+    except (TypeError, ValueError):
+        numeric = fallback
+    return min(maximum, max(minimum, numeric))
+
+
+def _bool_setting(value: object, fallback: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.lower() in {"true", "false"}:
+        return value.lower() == "true"
+    return fallback
+
+
+def _choice_setting(value: object, fallback: str, choices: set[str]) -> str:
+    text = str(value or "").strip()
+    return text if text in choices else fallback
+
+
+def _normalize_runtime_settings(settings: object, profile_key: str = "general") -> dict:
+    source = settings if isinstance(settings, dict) else {}
+    normalized = dict(DEFAULT_RUNTIME_SETTINGS)
+    normalized["targetLang"] = _safe_language(source.get("targetLang"), DEFAULT_RUNTIME_SETTINGS["targetLang"])
+    normalized["echoTarget"] = _bool_setting(source.get("echoTarget"), DEFAULT_RUNTIME_SETTINGS["echoTarget"])
+    normalized["inputTranscriptEnabled"] = _bool_setting(source.get("inputTranscriptEnabled"), DEFAULT_RUNTIME_SETTINGS["inputTranscriptEnabled"])
+    normalized["outputTranscriptEnabled"] = _bool_setting(source.get("outputTranscriptEnabled"), DEFAULT_RUNTIME_SETTINGS["outputTranscriptEnabled"])
+    normalized["audioChunkMs"] = _clamp_number(source.get("audioChunkMs"), DEFAULT_RUNTIME_SETTINGS["audioChunkMs"], 100, 500)
+    normalized["responseDrainMs"] = _clamp_number(source.get("responseDrainMs"), DEFAULT_RUNTIME_SETTINGS["responseDrainMs"], 3000, 12000)
+    normalized["silenceDurationMs"] = _clamp_number(source.get("silenceDurationMs"), DEFAULT_RUNTIME_SETTINGS["silenceDurationMs"], 300, 2000)
+    normalized["prefixPaddingMs"] = _clamp_number(source.get("prefixPaddingMs"), DEFAULT_RUNTIME_SETTINGS["prefixPaddingMs"], 0, 1000)
+    normalized["startSensitivity"] = _choice_setting(
+        source.get("startSensitivity"),
+        DEFAULT_RUNTIME_SETTINGS["startSensitivity"],
+        {"START_SENSITIVITY_HIGH", "START_SENSITIVITY_LOW"},
+    )
+    normalized["endSensitivity"] = _choice_setting(
+        source.get("endSensitivity"),
+        DEFAULT_RUNTIME_SETTINGS["endSensitivity"],
+        {"END_SENSITIVITY_HIGH", "END_SENSITIVITY_LOW"},
+    )
+    normalized["activityHandling"] = _choice_setting(
+        source.get("activityHandling"),
+        DEFAULT_RUNTIME_SETTINGS["activityHandling"],
+        {"START_OF_ACTIVITY_INTERRUPTS", "NO_INTERRUPTION"},
+    )
+    normalized["turnCoverage"] = _choice_setting(
+        source.get("turnCoverage"),
+        DEFAULT_RUNTIME_SETTINGS["turnCoverage"],
+        {"TURN_INCLUDES_ONLY_ACTIVITY", "TURN_INCLUDES_ALL_INPUT"},
+    )
+    normalized["cloneSourceVoiceMode"] = _choice_setting(
+        source.get("cloneSourceVoiceMode"),
+        DEFAULT_RUNTIME_SETTINGS["cloneSourceVoiceMode"],
+        {"none", "google", "elevenlabs"},
+    )
+    normalized["googleCloneMode"] = _choice_setting(
+        source.get("googleCloneMode"),
+        DEFAULT_RUNTIME_SETTINGS["googleCloneMode"],
+        {"chirp_instant_custom_voice"},
+    )
+    normalized["elevenLabsCloneMode"] = _choice_setting(
+        source.get("elevenLabsCloneMode"),
+        DEFAULT_RUNTIME_SETTINGS["elevenLabsCloneMode"],
+        {"speech_to_speech", "transcript_tts"},
+    )
+    normalized["cloneSaveAudio"] = _bool_setting(source.get("cloneSaveAudio"), DEFAULT_RUNTIME_SETTINGS["cloneSaveAudio"])
+    normalized["cloneFallbackToLiveTranslate"] = _bool_setting(
+        source.get("cloneFallbackToLiveTranslate"),
+        DEFAULT_RUNTIME_SETTINGS["cloneFallbackToLiveTranslate"],
+    )
+    normalized["cloneVoiceAlias"] = str(source.get("cloneVoiceAlias") or "")[:240]
+    normalized["cloneConsentVersion"] = str(source.get("cloneConsentVersion") or "")[:120]
+    normalized["profileKey"] = profile_key
+    normalized["profileLabel"] = _profile_label(profile_key)
+    if isinstance(source.get("savedAt"), str):
+        normalized["savedAt"] = source["savedAt"]
+    return normalized
+
+
+def _normalize_voice_profiles(value: object) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    seen = set()
+    profiles = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        email = _safe_speaker_email(item.get("email") or item.get("speaker_email"))
+        voice_id = str(item.get("voice_id") or "").strip()
+        if not email or not voice_id or email in seen:
+            continue
+        seen.add(email)
+        profile = {
+            "email": email,
+            "voice_id": voice_id[:240],
+        }
+        for key in ["consent_version", "source_session_id", "source_audio_path", "created_at", "updated_at"]:
+            if isinstance(item.get(key), str):
+                profile[key] = item[key][:500]
+        if isinstance(item.get("requires_verification"), bool):
+            profile["requires_verification"] = item["requires_verification"]
+        profiles.append(profile)
+    return sorted(profiles, key=lambda item: item["email"])
+
+
+def _runtime_settings_contract() -> dict:
+    return {
+        "model": MODEL_NAME,
+        "model_resource": MODEL_RESOURCE,
+        "input_audio": {"mime_type": "audio/pcm", "sample_rate_hz": 16000, "channels": 1},
+        "output_audio": {"mime_type": "audio/pcm", "sample_rate_hz": 24000, "channels": 1},
+        "token_endpoint": "/api/console/live-translate/session-token",
+        "connect_api_version": "v1alpha",
+        "connect_rpc": "BidiGenerateContentConstrained",
+        "token_query_param": "access_token",
+        "setup_shape": "github_live_translate_hybrid",
+        "client_send_gate": "setup_complete",
+        "source_voice_clone_modes": ["none", "google", "elevenlabs"],
+        "source_voice_clone_execution": {
+            "none": "current_live_translate_audio_path",
+            "google": "wired_with_google_tts_voice_cloning_key",
+            "elevenlabs": "wired_with_api_key_and_voice_id",
+        },
+    }
+
+
+def _default_runtime_settings_document(actor_email: str | None = None) -> dict:
+    now = _now_iso()
+    return {
+        "schema_version": 1,
+        "description": "Single source of truth for Admin Console and Collabra Live Translate runtime profiles. No secrets.",
+        "updated_at": now,
+        "updated_by": actor_email,
+        "active_profile": "general",
+        "fallback_order": ["requested_profile", "general", "default_runtime_settings"],
+        "runtime_contract": _runtime_settings_contract(),
+        "profiles": {
+            "general": _normalize_runtime_settings(DEFAULT_RUNTIME_SETTINGS, "general"),
+        },
+        "elevenlabs_voice_profiles": [],
+    }
+
+
+def _normalize_runtime_settings_document(document: object, actor_email: str | None = None) -> dict:
+    source = document if isinstance(document, dict) else {}
+    normalized = _default_runtime_settings_document(actor_email)
+    normalized["updated_at"] = source.get("updated_at") if isinstance(source.get("updated_at"), str) else normalized["updated_at"]
+    normalized["updated_by"] = source.get("updated_by") if isinstance(source.get("updated_by"), str) else source.get("updated_by")
+    normalized["active_profile"] = _safe_settings_profile_key(source.get("active_profile"), "general")
+    profiles = source.get("profiles") if isinstance(source.get("profiles"), dict) else {}
+    normalized_profiles = {}
+    for key, value in profiles.items():
+        profile_key = _safe_settings_profile_key(key, "")
+        if profile_key:
+            normalized_profiles[profile_key] = _normalize_runtime_settings(value, profile_key)
+    if "general" not in normalized_profiles:
+        normalized_profiles["general"] = _normalize_runtime_settings(DEFAULT_RUNTIME_SETTINGS, "general")
+    normalized["profiles"] = normalized_profiles
+    normalized["elevenlabs_voice_profiles"] = _normalize_voice_profiles(source.get("elevenlabs_voice_profiles"))
+    return normalized
+
+
+def _read_runtime_settings_document(bucket, actor_email: str | None = None) -> tuple[dict, bool]:
+    blob = bucket.blob(RUNTIME_SETTINGS_PATH)
+    if not blob.exists():
+        document = _default_runtime_settings_document(actor_email)
+        _upload_text_blob(bucket, RUNTIME_SETTINGS_PATH, document)
+        return document, True
+    return _normalize_runtime_settings_document(_read_json_blob(bucket, RUNTIME_SETTINGS_PATH), actor_email), False
+
+
+def _effective_runtime_settings(document: dict, requested_profile: str | None = None) -> tuple[str, dict]:
+    requested = _safe_settings_profile_key(requested_profile, document.get("active_profile") or "general")
+    profiles = document.get("profiles") if isinstance(document.get("profiles"), dict) else {}
+    if requested in profiles:
+        return requested, _normalize_runtime_settings(profiles[requested], requested)
+    if "general" in profiles:
+        return "general", _normalize_runtime_settings(profiles["general"], "general")
+    return "default", _normalize_runtime_settings(DEFAULT_RUNTIME_SETTINGS, "general")
 
 
 def _safe_session_id(value: object) -> str:
@@ -669,6 +898,76 @@ def _clone_storage_audit(bucket, prefix: str) -> dict:
     }
 
 
+@live_translate_bp.get("/api/console/live-translate/runtime-settings")
+@require_capability("console.use_live_translate")
+def live_translate_runtime_settings_get():
+    actor = resolve_actor(request)
+    requested_profile = request.args.get("profile")
+    try:
+        bucket = _storage_client().bucket(BUCKET_NAME)
+        document, created = _read_runtime_settings_document(bucket, actor.email or actor.user_id)
+        effective_profile, effective_settings = _effective_runtime_settings(document, requested_profile)
+        return jsonify(
+            {
+                "status": "ok",
+                "bucket": BUCKET_NAME,
+                "path": RUNTIME_SETTINGS_PATH,
+                "created": created,
+                "requested_profile": requested_profile,
+                "active_profile": document.get("active_profile") or "general",
+                "effective_profile": effective_profile,
+                "effective_settings": effective_settings,
+                "document": document,
+            }
+        )
+    except Exception as exc:
+        return jsonify({"status": "error", "message": f"Live Translate runtime settings failed: {type(exc).__name__}: {exc}"}), 502
+
+
+@live_translate_bp.post("/api/console/live-translate/runtime-settings")
+@require_capability("console.use_live_translate")
+def live_translate_runtime_settings_save():
+    actor = resolve_actor(request)
+    payload = request.get_json(silent=True) or {}
+    profile_key = _safe_settings_profile_key(payload.get("profile_key"), "general")
+    active_profile = _safe_settings_profile_key(payload.get("active_profile"), profile_key)
+    settings = _normalize_runtime_settings(payload.get("settings"), profile_key)
+    now = _now_iso()
+    settings["savedAt"] = now
+    try:
+        bucket = _storage_client().bucket(BUCKET_NAME)
+        document, _created = _read_runtime_settings_document(bucket, actor.email or actor.user_id)
+        profiles = document.setdefault("profiles", {})
+        if not isinstance(profiles, dict):
+            profiles = {}
+            document["profiles"] = profiles
+        profiles[profile_key] = settings
+        if "general" not in profiles:
+            profiles["general"] = _normalize_runtime_settings(DEFAULT_RUNTIME_SETTINGS, "general")
+        if "elevenlabs_voice_profiles" in payload:
+            document["elevenlabs_voice_profiles"] = _normalize_voice_profiles(payload.get("elevenlabs_voice_profiles"))
+        document["active_profile"] = active_profile
+        document["updated_at"] = now
+        document["updated_by"] = actor.email or actor.user_id
+        document["runtime_contract"] = _runtime_settings_contract()
+        document = _normalize_runtime_settings_document(document, actor.email or actor.user_id)
+        _upload_text_blob(bucket, RUNTIME_SETTINGS_PATH, document)
+        effective_profile, effective_settings = _effective_runtime_settings(document, active_profile)
+        return jsonify(
+            {
+                "status": "ok",
+                "bucket": BUCKET_NAME,
+                "path": RUNTIME_SETTINGS_PATH,
+                "active_profile": document.get("active_profile") or "general",
+                "effective_profile": effective_profile,
+                "effective_settings": effective_settings,
+                "document": document,
+            }
+        )
+    except Exception as exc:
+        return jsonify({"status": "error", "message": f"Live Translate runtime settings save failed: {type(exc).__name__}: {exc}"}), 502
+
+
 @live_translate_bp.get("/api/console/live-translate/config")
 @require_capability("console.use_live_translate")
 def live_translate_config():
@@ -701,6 +1000,7 @@ def live_translate_config():
                 "fixed": {"response_modalities": ["AUDIO"], "input_sample_rate_hz": 16000, "output_sample_rate_hz": 24000},
             },
             "save_prefix": SESSION_PREFIX,
+            "runtime_settings_path": RUNTIME_SETTINGS_PATH,
             "auth": {
                 "token_strategy": "ephemeral_v1alpha",
                 "connect_api_version": "v1alpha",
@@ -1707,6 +2007,11 @@ def live_translate_save_session():
     try:
         client = _storage_client()
         bucket = client.bucket(BUCKET_NAME)
+        try:
+            guard_log_tail = _read_json_blob(bucket, LIVE_CONVERSATION_GUARD_LOG_PATH)
+        except Exception:
+            guard_log_tail = None
+        backend_log["live_conversation_guard_log"] = (guard_log_tail if isinstance(guard_log_tail, list) else [])[-20:]
         writes = [
             (f"{prefix}/session.json", session_payload),
             (f"{prefix}/input_transcript.json", payload.get("input_transcript") or []),
@@ -1735,3 +2040,154 @@ def live_translate_save_session():
             "saved_paths": saved_paths,
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Live Conversation guard (kill switch) — درخواست 69 / سند 1004-0133
+# کلید روشن/خاموش قابلیت Live Conversation اپ از طریق config_domain_registry؛
+# هر تغییر در فایل لاگ GCS ثبت و در backend_log.json سشن‌ها هم دیده می‌شود.
+# ---------------------------------------------------------------------------
+
+LIVE_CONVERSATION_GUARD_LOG_PATH = "advisors/collabra-20018-v1.0.0/main-data/live-conversation-guard-log.json"
+_GUARD_REGISTRY_FILTER = {
+    "domain_key": "eq.live_conversation_guard",
+    "scope_kind": "eq.advisor",
+    "scope_ref": "eq.20018",
+}
+
+
+def _guard_rest_headers(write: bool = False) -> dict[str, str] | None:
+    service_role_key = os.environ.get("PRG2_SUPABASE_SERVICE_ROLE_KEY")
+    if not service_role_key:
+        return None
+    headers = {
+        "Accept": "application/json",
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+        # UA پیش‌فرض Python-urllib توسط WAF کلادفلر روی db.otmega.com بلاک می‌شود
+        "User-Agent": "otmega-console-live-conversation-guard/1.0",
+    }
+    if write:
+        headers["Content-Type"] = "application/json"
+        headers["Prefer"] = "return=representation"
+    return headers
+
+
+def _guard_public_view(payload: dict, updated_at: object = None, version: object = None) -> dict:
+    return {
+        "enabled": bool(payload.get("enabled")),
+        "max_sessions_per_user_per_day": payload.get("max_sessions_per_user_per_day"),
+        "max_session_seconds": payload.get("max_session_seconds"),
+        "updated_at": updated_at,
+        "version": version,
+    }
+
+
+def _fetch_live_conversation_guard() -> tuple[dict, dict]:
+    supabase_url = (os.environ.get("PRG2_SUPABASE_URL") or "").rstrip("/")
+    headers = _guard_rest_headers()
+    if not supabase_url or headers is None:
+        raise RuntimeError("PRG2 Supabase env is not configured on console backend.")
+    query = urllib.parse.urlencode({"select": "payload,updated_at,version", **_GUARD_REGISTRY_FILTER}, safe=",().*")
+    req = urllib.request.Request(
+        f"{supabase_url}/rest/v1/config_domain_registry?{query}",
+        headers=headers,
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=10) as response:
+        rows = json.loads(response.read().decode("utf-8"))
+    row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else None
+    if row is None:
+        raise RuntimeError("live_conversation_guard row not found in config_domain_registry.")
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    return payload, _guard_public_view(payload, row.get("updated_at"), row.get("version"))
+
+
+def _update_live_conversation_guard_enabled(enabled: bool) -> dict:
+    current_payload, _ = _fetch_live_conversation_guard()
+    new_payload = dict(current_payload)
+    new_payload["enabled"] = bool(enabled)
+    supabase_url = (os.environ.get("PRG2_SUPABASE_URL") or "").rstrip("/")
+    query = urllib.parse.urlencode(_GUARD_REGISTRY_FILTER, safe=",().*")
+    body = json.dumps({"payload": new_payload, "updated_at": _now_iso()}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{supabase_url}/rest/v1/config_domain_registry?{query}",
+        headers=_guard_rest_headers(write=True),
+        data=body,
+        method="PATCH",
+    )
+    with urllib.request.urlopen(req, timeout=10) as response:
+        rows = json.loads(response.read().decode("utf-8") or "[]")
+    row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else new_payload
+    return _guard_public_view(payload, row.get("updated_at"), row.get("version"))
+
+
+def _guard_log_tail(limit: int = 20) -> list:
+    try:
+        bucket = _storage_client().bucket(BUCKET_NAME)
+        log = _read_json_blob(bucket, LIVE_CONVERSATION_GUARD_LOG_PATH)
+        return (log if isinstance(log, list) else [])[-limit:]
+    except Exception:
+        return []
+
+
+def _append_guard_log(entry: dict) -> list:
+    bucket = _storage_client().bucket(BUCKET_NAME)
+    log = _read_json_blob(bucket, LIVE_CONVERSATION_GUARD_LOG_PATH)
+    log = log if isinstance(log, list) else []
+    log.append(entry)
+    if len(log) > 200:
+        log = log[-200:]
+    _upload_text_blob(bucket, LIVE_CONVERSATION_GUARD_LOG_PATH, log)
+    return log
+
+
+@live_translate_bp.get("/api/console/live-translate/live-conversation-guard")
+@require_capability("console.use_live_translate")
+def live_conversation_guard_status():
+    try:
+        _, guard = _fetch_live_conversation_guard()
+        return jsonify({"status": "ok", "guard": guard, "log": _guard_log_tail(20)})
+    except Exception as exc:
+        return jsonify({
+            "status": "error",
+            "message": f"Live Conversation guard read failed: {type(exc).__name__}: {exc}",
+        }), 502
+
+
+@live_translate_bp.post("/api/console/live-translate/live-conversation-guard")
+@require_capability("console.use_live_translate")
+def live_conversation_guard_update():
+    actor = resolve_actor(request)
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload.get("enabled"), bool):
+        return jsonify({"status": "error", "message": "Body must include boolean 'enabled'."}), 400
+    requested = payload["enabled"]
+    entry = {
+        "at": _now_iso(),
+        "source": "console.live_translate.guard_card",
+        "actor": actor.email or actor.user_id,
+        "action": "set_enabled",
+        "requested_enabled": requested,
+    }
+    try:
+        _, before = _fetch_live_conversation_guard()
+        entry["enabled_before"] = before["enabled"]
+        after = _update_live_conversation_guard_enabled(requested)
+        entry["enabled_after"] = after["enabled"]
+        entry["ok"] = True
+        log = _append_guard_log(entry)
+        return jsonify({"status": "ok", "guard": after, "log": log[-20:]})
+    except Exception as exc:
+        entry["ok"] = False
+        entry["error"] = f"{type(exc).__name__}: {exc}"
+        try:
+            log = _append_guard_log(entry)
+        except Exception:
+            log = [entry]
+        return jsonify({
+            "status": "error",
+            "message": f"Live Conversation guard update failed: {type(exc).__name__}: {exc}",
+            "log": log[-20:],
+        }), 502
