@@ -19,6 +19,9 @@ READ_ONLY_CAPABILITIES = (
     "console.use_transcript_api",
     "console.use_live_translate",
     "console.view_supabase_monitor",
+    "console.manage_apk_releases",
+    "console.view_user_devlog",
+    "console.manage_user_devlog",
 )
 
 

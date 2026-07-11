@@ -115,7 +115,7 @@ export default function OperationalResources({ enabled }: OperationalResourcesPr
           <p>Database, storage, hosting, edge workers and service links for Collabra operations.</p>
         </div>
         <button className="console-icon-text-button" disabled={loading} onClick={refreshResources} type="button">
-          <RefreshCw aria-hidden="true" size={17} />
+          <RefreshCw aria-hidden="true" className={loading ? 'spin' : undefined} size={17} />
           <span>{loading ? 'Refreshing' : 'Refresh'}</span>
         </button>
       </div>

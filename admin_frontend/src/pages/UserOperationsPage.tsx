@@ -1,7 +1,7 @@
 // FILE: ~/otmega/otmega_app/console/admin_frontend/src/pages/UserOperationsPage.tsx
 // ماموریت: جدول عملیاتی read-only کاربران، بنرلیست، استفاده و سلامت پیام/نوتیف.
 
-import { Eye, EyeOff, Grip, Maximize2, RefreshCw, RotateCcw, Search, WrapText, X } from 'lucide-react';
+import { Bug, Eye, EyeOff, Grip, Maximize2, RefreshCw, RotateCcw, Search, WrapText, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import {
   fetchConsoleDashboardSettings,
@@ -13,6 +13,7 @@ import {
   type UserOpsResponse,
   type UserOpsRow,
 } from '../api/consoleApi';
+import DevLogCasePanel from '../components/devlog/DevLogCasePanel';
 
 type UserOpsColumnKey =
   | 'row'
@@ -26,6 +27,7 @@ type UserOpsColumnKey =
   | 'conversations'
   | 'notifications'
   | 'banner_list'
+  | 'devlog'
   | 'refresh';
 
 type UserOpsColumn = {
@@ -40,6 +42,7 @@ type UserOpsColumn = {
     refreshPage: () => void;
     loading: boolean;
     openBannerList: (row: UserOpsRow) => void;
+    openDevLog: (row: UserOpsRow) => void;
   }) => ReactNode;
 };
 
@@ -162,6 +165,17 @@ const USER_OPS_COLUMNS: UserOpsColumn[] = [
     ),
   },
   {
+    key: 'devlog',
+    label: 'Dev Log',
+    defaultWidth: 116,
+    render: (row, _index, helpers) => (
+      <button className="console-icon-text-button user-ops-devlog-open" onClick={() => helpers.openDevLog(row)} type="button">
+        <Bug aria-hidden="true" size={15} />
+        <span>Dev Log</span>
+      </button>
+    ),
+  },
+  {
     key: 'refresh',
     label: 'Refresh',
     defaultWidth: 72,
@@ -210,6 +224,7 @@ function targetInitials(target: { full_name?: string | null; email?: string | nu
 
 type UserOperationsPageProps = {
   canRepair?: boolean;
+  canManageDevLog?: boolean;
 };
 
 function BannerTargetAvatar({ target, avatarUrl }: { target: UserOpsBannerTarget; avatarUrl?: string | null }) {
@@ -221,7 +236,7 @@ function BannerTargetAvatar({ target, avatarUrl }: { target: UserOpsBannerTarget
   );
 }
 
-export default function UserOperationsPage({ canRepair = false }: UserOperationsPageProps) {
+export default function UserOperationsPage({ canManageDevLog = false, canRepair = false }: UserOperationsPageProps) {
   const [payload, setPayload] = useState<UserOpsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -241,6 +256,7 @@ export default function UserOperationsPage({ canRepair = false }: UserOperations
   const [wrapCells, setWrapCells] = useState(false);
   const [rowHeight, setRowHeight] = useState(58);
   const [bannerPanelRow, setBannerPanelRow] = useState<UserOpsRow | null>(null);
+  const [devLogPanelRow, setDevLogPanelRow] = useState<UserOpsRow | null>(null);
   const [bannerPanel, setBannerPanel] = useState(DEFAULT_BANNER_PANEL);
   const [avatarUrlByPath, setAvatarUrlByPath] = useState<Record<string, string | null>>({});
   const [repairingTargetId, setRepairingTargetId] = useState<string | null>(null);
@@ -733,7 +749,13 @@ export default function UserOperationsPage({ canRepair = false }: UserOperations
             <div className="user-ops-row" key={row.user_id}>
               {visibleColumns.map((column) => (
                 <div className={`user-ops-cell user-ops-col-${column.key} ${column.sticky ? `sticky-${column.sticky}` : ''}`} key={`${row.user_id}:${column.key}`}>
-                  {column.render(row, index, { rowNumber, refreshPage: () => refreshUsers(page), loading, openBannerList: setBannerPanelRow })}
+                  {column.render(row, index, {
+                    rowNumber,
+                    refreshPage: () => refreshUsers(page),
+                    loading,
+                    openBannerList: setBannerPanelRow,
+                    openDevLog: setDevLogPanelRow,
+                  })}
                 </div>
               ))}
             </div>
@@ -747,6 +769,8 @@ export default function UserOperationsPage({ canRepair = false }: UserOperations
         <span>{loading ? 'Loading...' : `Page ${page} / ${totalPages}`}</span>
         <button className="console-secondary-button" disabled={loading || page >= totalPages} onClick={() => refreshUsers(page + 1)} type="button">Next</button>
       </div>
+
+      {devLogPanelRow ? <DevLogCasePanel canManage={canManageDevLog} onClose={() => setDevLogPanelRow(null)} row={devLogPanelRow} /> : null}
 
       {bannerPanelRow ? (
         <aside

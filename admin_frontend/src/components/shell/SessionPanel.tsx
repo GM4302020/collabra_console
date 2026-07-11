@@ -38,7 +38,7 @@ export default function SessionPanel({ collapsed, onLogout, onRelogin, session }
     <section className="console-sidebar-session" aria-label="Console session actions">
       <small title={actor?.email || 'No console session'}>{actor?.email || 'No console session'}</small>
       <button disabled={busy} onClick={submitRelogin} title="Re-login" type="button">
-        <RefreshCw aria-hidden="true" size={17} />
+        <RefreshCw aria-hidden="true" className={busy ? 'spin' : undefined} size={17} />
         <span>{collapsed ? '' : 'Re-login'}</span>
       </button>
       <button disabled={busy} onClick={submitLogout} title="Logout" type="button">

@@ -160,7 +160,7 @@ export default function OperationalLogsPage() {
             <span>Markdown</span>
           </button>
           <button className="console-icon-text-button" disabled={loading} onClick={refreshLogs} type="button">
-            <RefreshCw aria-hidden="true" size={17} />
+            <RefreshCw aria-hidden="true" className={loading ? 'spin' : undefined} size={17} />
             <span>{loading ? 'Refreshing' : 'Refresh'}</span>
           </button>
         </div>

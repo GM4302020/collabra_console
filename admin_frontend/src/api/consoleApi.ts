@@ -364,6 +364,179 @@ export type UserOpsRepairResponse = {
   };
 };
 
+export type DevLogCountdown = {
+  capture_remaining_seconds: number;
+  retention_started: boolean;
+  retention_remaining_seconds: number | null;
+  expired: boolean;
+  label: string;
+};
+
+export type DevLogManifest = {
+  schema_version: number;
+  case_id: string;
+  user_id: string;
+  user_label: string;
+  title: string;
+  status: 'active' | 'stopped' | string;
+  capture_started_at: string;
+  capture_expires_at: string;
+  capture_minutes: number;
+  retention_days: number;
+  retention_started_at: string | null;
+  first_download_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+  notes: Array<{ note_id: string; text: string; created_at: string; created_by: string }>;
+};
+
+export type DevLogDevice = {
+  device_session_ref: string;
+  device_key: string;
+  os: string;
+  browser: string;
+  runtime_kind: string;
+  native_platform: string;
+  frontend_version: string;
+};
+
+export type DevLogEvent = {
+  event_id: string;
+  event_code: string;
+  trace_id: string;
+  client_message_id: string | null;
+  message_id: string | null;
+  conversation_id: string | null;
+  source: string;
+  client_wall_at: string | null;
+  server_received_at: string;
+  duration_ms: number | null;
+  status: string | null;
+  reason_code: string | null;
+  details: Record<string, unknown>;
+  device: DevLogDevice;
+};
+
+export type DevLogArtifact = {
+  path: string;
+  name: string;
+  size: number;
+  content_type: string | null;
+  updated_at: string | null;
+};
+
+export type DevLogLatencyStats = {
+  count: number;
+  min_ms: number | null;
+  avg_ms: number | null;
+  median_ms: number | null;
+  p95_ms: number | null;
+  max_ms: number | null;
+};
+
+export type DevLogTraceAnalysis = {
+  trace_id: string;
+  kind: 'outgoing_send' | 'observed_incoming_or_realtime' | 'auxiliary' | string;
+  client_message_id: string | null;
+  message_id: string | null;
+  conversation_id: string | null;
+  device_session_ref: string;
+  event_count: number;
+  canonical_observation_count: number;
+  reconcile: { replace: number; insert: number; other: number };
+  identity_match: { matched: number; not_matched: number };
+  latency: Record<string, number | null>;
+  attention_flags: string[];
+  ordering_notes: string[];
+  event_sequence: string[];
+  notification_worker: {
+    outcome_count: number;
+    states: Record<string, number>;
+    rows: DevLogNotificationEvidenceRow[];
+  };
+};
+
+export type DevLogNotificationEvidenceRow = {
+  advisor_id: number | null;
+  message_id: string;
+  recipient_user_id: string;
+  route_selected: string | null;
+  notify_state: string;
+  created_at: string | null;
+  sent_at: string | null;
+  attempts: number | null;
+  last_attempt_at: string | null;
+  last_error_code: string | null;
+  created_to_sent_ms: number | null;
+};
+
+export type DevLogNotificationEvidence = {
+  available: boolean;
+  source: string;
+  queried_at?: string;
+  query_latency_ms?: number;
+  reason_code?: string | null;
+  counts: Record<string, number>;
+  rows: DevLogNotificationEvidenceRow[];
+};
+
+export type DevLogAnalytics = {
+  schema_version: number;
+  computed_at: string;
+  summary: {
+    event_count: number;
+    trace_count: number;
+    device_count: number;
+    outgoing_send_trace_count: number;
+    observed_incoming_trace_count: number;
+    auxiliary_trace_count: number;
+    attention_flag_count: number;
+    ordering_note_count: number;
+    worker_notification_outcome_count: number;
+  };
+  latency_stats: Record<string, DevLogLatencyStats>;
+  coverage: Record<string, boolean>;
+  reconcile_totals: { replace: number; insert: number; other: number };
+  identity_match_totals: { matched: number; not_matched: number };
+  event_code_counts: Record<string, number>;
+  source_counts: Record<string, number>;
+  attention_flags: string[];
+  ordering_notes: string[];
+  notification_worker: {
+    evidence_available: boolean;
+    source: string | null;
+    query_latency_ms: number | null;
+    reason_code: string | null;
+    counts: Record<string, number>;
+  };
+  traces: DevLogTraceAnalysis[];
+};
+
+export type DevLogCase = {
+  manifest: DevLogManifest;
+  countdown: DevLogCountdown;
+  events: DevLogEvent[];
+  devices: DevLogDevice[];
+  artifacts: DevLogArtifact[];
+  notification_evidence: DevLogNotificationEvidence;
+  analytics: DevLogAnalytics;
+  event_count: number;
+  storage_path: string;
+};
+
+export type DevLogCasesResponse = {
+  status: string;
+  bucket: string;
+  root: string;
+  cleaned_expired_cases: number;
+  cases: Array<DevLogManifest & { countdown: DevLogCountdown }>;
+};
+
+export type DevLogCaseResponse = {
+  status: string;
+  case: DevLogCase;
+};
+
 export type UiTextsMatrixRow = {
   key: string;
   category: string;
@@ -608,6 +781,73 @@ export function repairUserOpsActiveBanner(params: {
     confirmation: 'REPAIR',
     reason: params.reason || 'user_operations_banner_popup_repair',
   });
+}
+
+export function fetchDevLogCases(userId: string): Promise<DevLogCasesResponse> {
+  return getJson<DevLogCasesResponse>(`/api/console/devlog/cases?user_id=${encodeURIComponent(userId)}`);
+}
+
+export function createDevLogCase(payload: {
+  user_id: string;
+  user_label: string;
+  capture_minutes: number;
+  retention_days: number;
+}): Promise<DevLogCaseResponse> {
+  return postJson<DevLogCaseResponse>('/api/console/devlog/cases', payload);
+}
+
+export function fetchDevLogCase(caseId: string): Promise<DevLogCaseResponse> {
+  return getJson<DevLogCaseResponse>(`/api/console/devlog/cases/${encodeURIComponent(caseId)}`);
+}
+
+export function stopDevLogCase(caseId: string): Promise<DevLogCaseResponse> {
+  return postJson<DevLogCaseResponse>(`/api/console/devlog/cases/${encodeURIComponent(caseId)}/stop`);
+}
+
+export function confirmDevLogDownload(caseId: string): Promise<DevLogCaseResponse> {
+  return postJson<DevLogCaseResponse>(`/api/console/devlog/cases/${encodeURIComponent(caseId)}/download-confirmed`);
+}
+
+export function startDevLogRetention(caseId: string): Promise<DevLogCaseResponse> {
+  return postJson<DevLogCaseResponse>(`/api/console/devlog/cases/${encodeURIComponent(caseId)}/start-retention`);
+}
+
+export function addDevLogNote(caseId: string, text: string): Promise<DevLogCaseResponse> {
+  return postJson<DevLogCaseResponse>(`/api/console/devlog/cases/${encodeURIComponent(caseId)}/notes`, { text });
+}
+
+export async function uploadDevLogArtifact(caseId: string, file: File): Promise<DevLogCaseResponse> {
+  const body = new FormData();
+  body.append('file', file);
+  const response = await fetch(`/api/console/devlog/cases/${encodeURIComponent(caseId)}/artifacts`, {
+    body,
+    credentials: 'include',
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(payload?.message || `Artifact upload failed with ${response.status}`);
+  }
+  return response.json() as Promise<DevLogCaseResponse>;
+}
+
+export async function downloadDevLogCaseExport(caseId: string, format: 'json' | 'csv' | 'md' | 'html'): Promise<void> {
+  const response = await fetch(`/api/console/devlog/cases/${encodeURIComponent(caseId)}/export?format=${format}`, {
+    credentials: 'include',
+  });
+  if (!response.ok) throw new Error(`DevLog ${format} export failed with ${response.status}`);
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `devlog-${caseId}.${format}`;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  await confirmDevLogDownload(caseId);
 }
 
 export function fetchUiTextsMatrix(): Promise<UiTextsMatrixResponse> {
@@ -1284,4 +1524,85 @@ export async function updateLiveConversationGuard(enabled: boolean): Promise<Liv
     throw new Error(data?.message ?? `live-conversation-guard update failed ${response.status}`);
   }
   return data;
+}
+
+// --- APK Release Center (درخواست 2082 سند 0016-0201) ---
+
+export type ApkRelease = {
+  release_id: string;
+  version_name: string;
+  version_code: number;
+  released_at: string;
+  changelog: string;
+  file_name: string;
+  storage: 'gcs' | 'website_static';
+  gcs_object: string | null;
+  download_url: string | null;
+  size_bytes: number | null;
+  sha256: string | null;
+  status: 'active' | 'archived';
+  uploaded_by?: string | null;
+  created_at?: string | null;
+};
+
+export type ApkReleasesResponse = {
+  status: string;
+  message?: string;
+  active_release_id: string;
+  releases: ApkRelease[];
+  release_count: number;
+  updated_at: string | null;
+  stable_download_url: string;
+  version_info_url: string;
+  bucket: string;
+  base_path: string;
+};
+
+export function fetchApkReleases(): Promise<ApkReleasesResponse> {
+  return getJson<ApkReleasesResponse>('/api/console/apk-releases');
+}
+
+export async function uploadApkRelease(input: {
+  file: File;
+  versionName: string;
+  versionCode: number;
+  changelog: string;
+}): Promise<ApkReleasesResponse & { release?: ApkRelease }> {
+  const formData = new FormData();
+  formData.append('file', input.file);
+  formData.append('version_name', input.versionName);
+  formData.append('version_code', String(input.versionCode));
+  formData.append('changelog', input.changelog);
+  const response = await fetch('/api/console/apk-releases/upload', {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  });
+  const data = await response.json().catch(() => null) as (ApkReleasesResponse & { release?: ApkRelease }) | null;
+  if (!response.ok || !data || data.status !== 'ok') {
+    throw new Error(data?.message ?? `APK upload failed with ${response.status}`);
+  }
+  return data;
+}
+
+export function activateApkRelease(releaseId: string): Promise<ApkReleasesResponse> {
+  return postJson<ApkReleasesResponse>('/api/console/apk-releases/activate', { release_id: releaseId });
+}
+
+export type ApkReleaseVerifyCheck = {
+  name: string;
+  ok: boolean;
+  detail: string;
+};
+
+export type ApkReleaseVerifyResponse = {
+  status: string;
+  message?: string;
+  all_ok: boolean;
+  checks: ApkReleaseVerifyCheck[];
+  active_release_id: string;
+};
+
+export function verifyApkRelease(): Promise<ApkReleaseVerifyResponse> {
+  return postJson<ApkReleaseVerifyResponse>('/api/console/apk-releases/verify');
 }

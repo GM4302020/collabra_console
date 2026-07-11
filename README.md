@@ -132,3 +132,46 @@ console/
 ```
 
 Generated or external folders intentionally omitted: `node_modules/`, `dist/`, `static_frontend/`, `__pycache__/`, `.pytest_cache/`, and `test-results/`.
+
+## MANDATORY console development standards (read FIRST — request 2083, doc 0016-0201)
+
+Every developer/agent touching the console MUST follow these two standards. PRs/changes that skip them are non-compliant.
+
+### 1. Button/operation feedback (UI/UX)
+
+- Every operational button must give the user a "pressed" feel: the universal backlight
+  press-pulse in `styles/console.css` fires automatically on `:active` for the standard
+  button classes (`console-icon-text-button`, `console-secondary-button`, sidebar session
+  buttons). NEVER build a custom-styled action button outside these classes without
+  adding the same pulse.
+- Every ASYNC operation (refresh, upload, activate, verify, apply, reload, re-login, ...)
+  must animate its icon while in flight with the shared `spin` class:
+  `<RefreshCw className={loading ? 'spin' : undefined} />`.
+
+### 2. Page state persistence (cloud, per actor)
+
+- The last state of every page/panel (selected tab, filters, wizard progress, layout)
+  must be saved and restored via the shared hook
+  `admin_frontend/src/hooks/useConsolePageState.ts` with a stable `snake_case` section
+  key. It stores per-actor, per-section into the GCS console settings file
+  (`advisors/collabra-20018-v1.0.0/main-data/admin-console-dashboard-settings.json`).
+- The backend endpoint merges PER SECTION — a page may only ever write its own section.
+  Do NOT hand-roll load/save against the settings endpoint, do NOT use localStorage for
+  page state, and NEVER write to other `main-data/*.json` files from page-state code:
+  several of those files feed the Collabra app itself (runtime settings, guards) and
+  clobbering them breaks production.
+
+## User Operations Dev Log
+
+- Surface: `User Operations` → per-user `Dev Log` column/panel.
+- Capabilities: `console.view_user_devlog`, `console.manage_user_devlog` (User Zero only).
+- Storage root: `advisors/collabra-20018-v1.0.0/main-data/debug-cases/<case_id>/` in the private app-data bucket.
+- Console routes: `/api/console/devlog/cases` plus case detail, stop, retention, notes, artifacts and JSON/CSV/MD/HTML export endpoints.
+- Deletion retention starts only after the browser has received an export and initiated its download, or after the operator explicitly chooses `Start countdown`.
+- Panel capture/retention selections use `useConsolePageState` section `user_operations_devlog`; case state itself remains the GCS manifest source of truth.
+- Technical contract and continuation notes: `docs/10-collabra/1004-0134-01-FA-TECH-Develop_Log_Instrumentation_Protocol.md`.
+- Detail responses and JSON exports include computed `analytics`; CSV includes summary/latency/coverage/trace/event rows, MD includes printable analysis tables, and the panel exposes `Computed sequence analysis` plus `Print analysis`.
+- Receipt analysis includes captured Delivered/Read observations and Visibility enter/exit. Coverage labels are `CAPTURED/NOT CAPTURED`; they describe DevLog evidence availability, not the actual product state when instrumentation is absent.
+- HTML export renders one Mermaid path per sent/received message, with stage/edge latencies, captured/missing/error/bottleneck styling, printable layout and an exact per-trace fallback timeline table.
+- `canonical_arrived_before_http_ack:<delta>ms` is an informational `ordering_note` (blue), not an attention/error flag; Realtime and HTTP are parallel return paths. Stable message identity prefers Canonical/HTTP ACK server IDs over optimistic IDs.
+- Worker notification coverage is correlated read-only by canonical `message_id` against service-role-only `message_notify_dedupe`. JSON/CSV/MD/HTML include route, state, attempts and dedupe-created-to-sent latency; provider error bodies and credentials are never exported. Existing Cloudflare Dashboard probes remain control-plane only (scripts/DNS/routes).

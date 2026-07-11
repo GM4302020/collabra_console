@@ -5,9 +5,11 @@ import os
 
 from flask import Flask
 
+from admin_api.apk_release_routes import apk_release_bp
 from admin_api.audit_routes import audit_bp
 from admin_api.config_routes import config_bp
 from admin_api.dashboard_settings_routes import dashboard_settings_bp
+from admin_api.devlog_routes import devlog_bp
 from admin_api.gcs_routes import gcs_bp
 from admin_api.health_routes import health_bp
 from admin_api.live_translate_routes import live_translate_bp
@@ -33,6 +35,7 @@ def create_app() -> Flask:
     app.register_blueprint(session_bp)
     app.register_blueprint(config_bp)
     app.register_blueprint(dashboard_settings_bp)
+    app.register_blueprint(devlog_bp)
     app.register_blueprint(gcs_bp)
     app.register_blueprint(live_translate_bp)
     app.register_blueprint(operational_bp)
@@ -41,6 +44,7 @@ def create_app() -> Flask:
     app.register_blueprint(svlip_prefs_bp)
     app.register_blueprint(user_ops_bp)
     app.register_blueprint(supabase_monitor_bp)
+    app.register_blueprint(apk_release_bp)
     register_static_routes(app)
     return app
 

@@ -560,7 +560,7 @@ export default function UiTextsMatrixPage() {
           <p>Spreadsheet workspace for language keys, Python exports, SQL patches, and controlled direct apply.</p>
         </div>
         <button className="console-secondary-button" disabled={applying} onClick={loadMatrix} type="button">
-          <RefreshCw aria-hidden="true" size={16} />
+          <RefreshCw aria-hidden="true" className={loading ? 'spin' : undefined} size={16} />
           Reload from DB
         </button>
       </div>
