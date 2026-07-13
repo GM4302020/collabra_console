@@ -106,7 +106,8 @@ export default function DevLogCasePanel({ row, canManage, onClose }: DevLogCaseP
   const retentionRemaining = remainingUntil(currentCase?.manifest.expires_at, now);
   const devices = currentCase?.devices || [];
   const analytics = currentCase?.analytics;
-  const outgoingTraces = analytics?.traces.filter((trace) => trace.kind === 'outgoing_send') || [];
+  const interpretation = analytics?.interpretation;
+  const outgoingTraces = analytics?.traces.filter((trace) => trace.kind === 'outgoing_send' || trace.kind === 'outgoing_partial') || [];
   const recentEvents = useMemo(() => (currentCase?.events || []).slice(-200).reverse(), [currentCase?.events]);
 
   async function runAction(action: string, operation: () => Promise<DevLogCase | null>, success: string) {
@@ -234,8 +235,41 @@ export default function DevLogCasePanel({ row, canManage, onClose }: DevLogCaseP
 
           <section className="devlog-case-analysis">
             <h3>Computed sequence analysis</h3>
+            {interpretation ? (
+              <section className="devlog-interpretation">
+                <header>
+                  <div><strong>Deterministic case analysis</strong><small>Version {interpretation.analysis_version} · {interpretation.snapshot_status.replaceAll('_', ' ')}</small></div>
+                  <div className="devlog-analysis-badges">
+                    <span>{interpretation.classification.replaceAll('_', ' ')}</span>
+                    <span className={`confidence-${interpretation.confidence}`}>{interpretation.confidence} confidence</span>
+                    <span>{interpretation.severity}</span>
+                  </div>
+                </header>
+                <small>{interpretation.confidence_basis}</small>
+                <div className="devlog-interpretation-grid">
+                  <article>
+                    <h4>Management analysis</h4>
+                    <ul>{interpretation.management_summary.map((item) => <li key={item}>{item}</li>)}</ul>
+                  </article>
+                  <article>
+                    <h4>Technical analysis</h4>
+                    <ul>{interpretation.technical_analysis.map((item) => <li key={item}>{item}</li>)}</ul>
+                  </article>
+                </div>
+                <p className="devlog-next-action"><strong>Next diagnostic action</strong>{interpretation.next_diagnostic_action}</p>
+                <details className="devlog-analysis-references">
+                  <summary>Related code files, documents and limitations</summary>
+                  <div className="devlog-reference-grid">
+                    <article><h4>Code files</h4>{interpretation.related_files.map((item) => <p key={item.path}><code>{item.path}</code><small>{item.component} · {item.reason}</small></p>)}</article>
+                    <article><h4>Documents</h4>{interpretation.related_documents.map((item) => <p key={item.path}><code>{item.path}</code><small>{item.title}</small></p>)}</article>
+                  </div>
+                  <h4>Limitations</h4>
+                  <ul>{interpretation.limitations.map((item) => <li key={item}>{item}</li>)}</ul>
+                </details>
+              </section>
+            ) : null}
             <div className="devlog-analysis-summary">
-              <article><span>Traces</span><strong>{analytics?.summary.trace_count || 0}</strong><small>{analytics?.summary.outgoing_send_trace_count || 0} outgoing · {analytics?.summary.observed_incoming_trace_count || 0} observed incoming</small></article>
+              <article><span>Traces</span><strong>{analytics?.summary.trace_count || 0}</strong><small>{analytics?.summary.outgoing_send_trace_count || 0} outgoing ({analytics?.summary.outgoing_partial_trace_count || 0} partial) · {analytics?.summary.observed_incoming_trace_count || 0} observed incoming</small></article>
               <article><span>HTTP ACK average</span><strong>{formatLatency(analytics?.latency_stats.http_start_to_ack_ms?.avg_ms)}</strong><small>client HTTP start → response ACK</small></article>
               <article><span>Canonical average</span><strong>{formatLatency(analytics?.latency_stats.http_start_to_canonical_ms?.avg_ms)}</strong><small>HTTP start → canonical observed</small></article>
               <article><span>Delivered average</span><strong>{formatLatency(analytics?.latency_stats.http_start_to_delivered_observed_ms?.avg_ms)}</strong><small>HTTP start → delivered observed</small></article>
@@ -255,7 +289,7 @@ export default function DevLogCasePanel({ row, canManage, onClose }: DevLogCaseP
               {outgoingTraces.map((trace) => (
                 <details key={trace.trace_id}>
                   <summary>
-                    <span><code>{trace.trace_id.slice(-18)}</code><small>{trace.message_id?.slice(-12) || trace.client_message_id?.slice(-12) || 'no message id'}</small></span>
+                    <span><code>{trace.trace_id.slice(-18)}</code><small>{trace.kind === 'outgoing_partial' ? 'partial outgoing · ' : ''}{trace.message_id?.slice(-12) || trace.client_message_id?.slice(-12) || 'no message id'}</small></span>
                     <span>{formatLatency(trace.latency.http_start_to_ack_ms)}</span>
                     <span>{formatLatency(trace.latency.http_start_to_canonical_ms)}</span>
                     <span>{formatLatency(trace.latency.http_start_to_delivered_observed_ms)}</span>
@@ -264,7 +298,7 @@ export default function DevLogCasePanel({ row, canManage, onClose }: DevLogCaseP
                     <span>{formatLatency(trace.latency.backend_saved_cumulative_ms)}</span>
                     <span>{formatLatency(trace.latency.backend_post_processing_cumulative_ms)}</span>
                     <span>{trace.reconcile.replace} replace / {trace.reconcile.insert} insert</span>
-                    <span>{[...trace.attention_flags, ...trace.ordering_notes].join(', ') || '—'}</span>
+                    <span>{[...trace.attention_flags, ...trace.ordering_notes, ...trace.evidence_gaps].join(', ') || '—'}</span>
                   </summary>
                   <div className="devlog-trace-sequence">{trace.event_sequence.join(' → ')}</div>
                 </details>

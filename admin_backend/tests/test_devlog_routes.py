@@ -207,6 +207,12 @@ def test_devlog_exports_include_computed_trace_analytics(monkeypatch):
     assert analytics["coverage"]["worker_notification"] is True
     assert trace["notification_worker"]["states"] == {"sent": 1}
     assert analytics["latency_stats"]["worker_notification_created_to_sent_ms"]["avg_ms"] == 250.0
+    assert analytics["interpretation"]["snapshot_status"] == "preliminary_active_capture"
+    assert analytics["interpretation"]["confidence"] == "medium"
+    assert analytics["interpretation"]["management_summary"]
+    assert analytics["interpretation"]["technical_analysis"]
+    assert any(item["path"].endswith("ChatContextV2.jsx") for item in analytics["interpretation"]["related_files"])
+    assert any(item["path"].endswith("Develop_Log_Instrumentation_Protocol.md") for item in analytics["interpretation"]["related_documents"])
 
     json_export = client.get(f"/api/console/devlog/cases/{case_id}/export?format=json").get_json()
     csv_export = client.get(f"/api/console/devlog/cases/{case_id}/export?format=csv").get_data(as_text=True)
@@ -217,10 +223,13 @@ def test_devlog_exports_include_computed_trace_analytics(monkeypatch):
     assert "trace_analysis" in csv_export
     assert "http_start_to_ack_ms" in csv_export
     assert "worker_notification_evidence" in csv_export
+    assert "case_analysis_reference" in csv_export
     assert "## Computed Analysis" in md_export
     assert "Per-trace Sequence and Latency" in md_export
     assert "CAPTURED — `delivered_status`" in md_export
     assert "Notification Worker Evidence" in md_export
+    assert "Management Analysis" in md_export
+    assert "Related Code Files" in md_export
     assert html_response.status_code == 200
     assert html_response.mimetype == "text/html"
     assert 'class="mermaid"' in html_export
@@ -231,7 +240,35 @@ def test_devlog_exports_include_computed_trace_analytics(monkeypatch):
     assert "trace-received" in html_export
     assert "Delivered observed" in html_export
     assert "Notification Worker" in html_export
+    assert "Deterministic case analysis" in html_export
+    assert "Management analysis" in html_export
+    assert "Related code files, documents and limitations" in html_export
     assert "Ordering note" in html_export
     assert "canonical_arrived_before_http_ack:10ms" in html_export
     assert "No deterministic error flag captured" in html_export
     assert "cdn.jsdelivr.net/npm/mermaid@11" in html_export
+
+
+def test_partial_outgoing_trace_is_not_misclassified_as_incoming():
+    message_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    events = [
+        {"event_code": "DL-FE-CANONICAL-OBSERVED", "trace_id": "chat_send_partial", "client_mono_ms": 100, "message_id": message_id, "client_message_id": "client-partial", "source": "frontend"},
+        {"event_code": "DL-FE-HTTP-ACK", "trace_id": "chat_send_partial", "client_mono_ms": 180, "message_id": message_id, "client_message_id": "client-partial", "source": "frontend"},
+        {"event_code": "DL-FE-RECONCILE-DECISION", "trace_id": "chat_send_partial", "client_mono_ms": 190, "message_id": message_id, "reason_code": "http_ack_identity_match", "details": {"action": "replace", "source": "http_ack_buffer"}, "source": "frontend"},
+    ]
+    analytics = devlog_routes._build_case_analytics(
+        events,
+        [],
+        {"available": True, "source": "message_notify_dedupe", "rows": [], "counts": {}, "reason_code": "no_matching_worker_outcome"},
+        {"status": "active"},
+    )
+
+    trace = analytics["traces"][0]
+    assert trace["kind"] == "outgoing_partial"
+    assert trace["evidence_gaps"] == ["missing_http_start", "missing_optimistic_created", "missing_backend_send_milestones"]
+    assert analytics["summary"]["outgoing_send_trace_count"] == 1
+    assert analytics["summary"]["outgoing_partial_trace_count"] == 1
+    assert analytics["summary"]["observed_incoming_trace_count"] == 0
+    assert analytics["coverage"]["http_start"] is False
+    assert analytics["interpretation"]["classification"] == "no_failure_observed_partial_evidence"
+    assert "Capture one fresh send" in analytics["interpretation"]["next_diagnostic_action"]

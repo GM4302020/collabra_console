@@ -448,6 +448,7 @@ export type DevLogTraceAnalysis = {
   latency: Record<string, number | null>;
   attention_flags: string[];
   ordering_notes: string[];
+  evidence_gaps: string[];
   event_sequence: string[];
   notification_worker: {
     outcome_count: number;
@@ -480,6 +481,27 @@ export type DevLogNotificationEvidence = {
   rows: DevLogNotificationEvidenceRow[];
 };
 
+export type DevLogCaseInterpretation = {
+  analysis_version: number;
+  generated_at: string;
+  snapshot_status: string;
+  classification: string;
+  severity: string;
+  confidence: 'low' | 'medium' | 'high';
+  confidence_basis: string;
+  management_summary: string[];
+  technical_analysis: string[];
+  captured_evidence: string[];
+  missing_evidence: string[];
+  data_quality: {
+    collector_ingest_delay_ms: DevLogLatencyStats & { interpretation: string };
+  };
+  related_files: Array<{ path: string; component: string; reason: string }>;
+  related_documents: Array<{ path: string; title: string }>;
+  next_diagnostic_action: string;
+  limitations: string[];
+};
+
 export type DevLogAnalytics = {
   schema_version: number;
   computed_at: string;
@@ -488,6 +510,8 @@ export type DevLogAnalytics = {
     trace_count: number;
     device_count: number;
     outgoing_send_trace_count: number;
+    outgoing_complete_trace_count: number;
+    outgoing_partial_trace_count: number;
     observed_incoming_trace_count: number;
     auxiliary_trace_count: number;
     attention_flag_count: number;
@@ -509,6 +533,7 @@ export type DevLogAnalytics = {
     reason_code: string | null;
     counts: Record<string, number>;
   };
+  interpretation: DevLogCaseInterpretation;
   traces: DevLogTraceAnalysis[];
 };
 

@@ -351,10 +351,186 @@ def _load_notification_evidence(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _collector_ingest_delay_stats(events: list[dict[str, Any]]) -> dict[str, Any]:
+    values: list[float] = []
+    for event in events:
+        client_at = _parse_utc(event.get("client_wall_at"))
+        server_at = _parse_utc(event.get("server_received_at"))
+        if not client_at or not server_at:
+            continue
+        value = (server_at - client_at).total_seconds() * 1000
+        if -3_600_000 <= value <= 3_600_000:
+            values.append(value)
+    return {
+        **_latency_stats(values),
+        "interpretation": "Wall-clock estimate of batching/collector arrival; clock skew may contribute and this is not message latency.",
+    }
+
+
+def _analysis_ms(value: Any) -> str:
+    parsed = _number(value)
+    return f"{round(parsed, 2):g} ms" if parsed is not None else "not captured"
+
+
+def _build_case_interpretation(
+    analytics: dict[str, Any],
+    events: list[dict[str, Any]],
+    devices: list[dict[str, Any]],
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    summary = analytics.get("summary") or {}
+    coverage = analytics.get("coverage") or {}
+    latency_stats = analytics.get("latency_stats") or {}
+    attention = analytics.get("attention_flags") or []
+    ordering = analytics.get("ordering_notes") or []
+    outgoing_count = int(summary.get("outgoing_send_trace_count") or 0)
+    partial_count = int(summary.get("outgoing_partial_trace_count") or 0)
+    incoming_count = int(summary.get("observed_incoming_trace_count") or 0)
+    message_trace_count = outgoing_count + incoming_count
+    manifest_active = str(manifest.get("status") or "").lower() == "active"
+    capture_expires_at = _parse_utc(manifest.get("capture_expires_at"))
+    is_active = bool(manifest_active and (not capture_expires_at or capture_expires_at > _utc_now()))
+    snapshot_status = "preliminary_active_capture" if is_active else "final_capture_expired" if manifest_active else "final_capture_snapshot"
+    missing_coverage = [key for key, captured in coverage.items() if not captured]
+    captured_coverage = [key for key, captured in coverage.items() if captured]
+
+    if attention:
+        classification = "attention_required"
+        severity = "attention"
+    elif not message_trace_count:
+        classification = "insufficient_message_evidence"
+        severity = "unknown"
+    elif missing_coverage or partial_count:
+        classification = "no_failure_observed_partial_evidence"
+        severity = "informational"
+    else:
+        classification = "no_deterministic_failure_observed"
+        severity = "informational"
+
+    critical_coverage = sum(bool(coverage.get(key)) for key in ("http_ack", "backend_send", "canonical_observed", "identity_and_reconcile"))
+    confidence = "high" if message_trace_count and critical_coverage == 4 and not is_active else "medium" if message_trace_count and critical_coverage >= 2 else "low"
+    if attention and confidence == "low":
+        confidence = "medium"
+
+    device_labels = sorted({
+        " / ".join(str(value or "unknown") for value in (device.get("os"), device.get("browser"), device.get("runtime_kind"), device.get("frontend_version")))
+        for device in devices
+        if isinstance(device, dict)
+    })
+    management: list[str] = [
+        (
+            "This is a preliminary snapshot because capture is still active; findings can change as new events arrive."
+            if is_active
+            else "This snapshot was analyzed after capture stopped or completed."
+        ),
+        f"The case contains {message_trace_count} message trace(s) across {len(devices)} captured device session(s)"
+        + (f": {', '.join(device_labels[:4])}." if device_labels else "."),
+    ]
+    if attention:
+        management.append(f"Deterministic attention evidence exists: {', '.join(attention)}.")
+    elif message_trace_count:
+        management.append("No deterministic failure was observed in the captured evidence; this does not prove uncaptured stages were healthy.")
+    else:
+        management.append("No message trace is available, so user impact and message health cannot be concluded.")
+
+    delivered_avg = (latency_stats.get("canonical_to_delivered_observed_ms") or {}).get("avg_ms")
+    read_avg = (latency_stats.get("delivered_to_read_observed_ms") or {}).get("avg_ms")
+    if delivered_avg is not None or read_avg is not None:
+        management.append(f"Observed timing: canonical to Delivered {_analysis_ms(delivered_avg)}; Delivered to Read {_analysis_ms(read_avg)}.")
+    worker_counts = (analytics.get("notification_worker") or {}).get("counts") or {}
+    worker_avg = (latency_stats.get("worker_notification_created_to_sent_ms") or {}).get("avg_ms")
+    if worker_counts:
+        management.append(f"Notification Worker outcomes are {json.dumps(worker_counts, sort_keys=True)} with dedupe-created to sent average {_analysis_ms(worker_avg)}.")
+    if missing_coverage:
+        management.append(f"Management conclusion is limited by missing evidence: {', '.join(missing_coverage)}.")
+
+    technical: list[str] = [
+        f"Direction classification: {int(summary.get('outgoing_complete_trace_count') or 0)} complete outgoing, {partial_count} partial outgoing, and {incoming_count} observed incoming/realtime trace(s).",
+        f"Identity/reconcile totals: {(analytics.get('identity_match_totals') or {}).get('matched', 0)} matched, {(analytics.get('identity_match_totals') or {}).get('not_matched', 0)} not matched; {(analytics.get('reconcile_totals') or {}).get('replace', 0)} replace, {(analytics.get('reconcile_totals') or {}).get('insert', 0)} insert.",
+    ]
+    if partial_count:
+        partial_ids = [str(trace.get("trace_id")) for trace in analytics.get("traces") or [] if trace.get("kind") == "outgoing_partial"]
+        technical.append(f"Partial outgoing trace(s) were identified from HTTP ACK/optimistic/backend/reconcile send evidence despite missing HTTP START: {', '.join(partial_ids[:5])}.")
+    if ordering:
+        technical.append(f"Informational parallel-path ordering: {', '.join(ordering)}.")
+    if attention:
+        technical.append(f"Attention flags requiring inspection: {', '.join(attention)}.")
+    if coverage.get("worker_notification"):
+        technical.append(f"Worker outcome was correlated by canonical message_id through message_notify_dedupe; retry counter semantics are distinct from total send attempts.")
+    collector_stats = _collector_ingest_delay_stats(events)
+    if collector_stats.get("count"):
+        technical.append(
+            "Collector arrival wall-clock estimate: "
+            f"min {_analysis_ms(collector_stats.get('min_ms'))}, avg {_analysis_ms(collector_stats.get('avg_ms'))}, max {_analysis_ms(collector_stats.get('max_ms'))}; "
+            "this measures batching/clock difference, not product message latency."
+        )
+    if missing_coverage:
+        technical.append(f"Unavailable instrumentation stages: {', '.join(missing_coverage)}.")
+
+    related_files = [
+        {"path": "console/admin_backend/admin_api/devlog_routes.py", "component": "Console Backend", "reason": "case analytics, deterministic interpretation and exports"},
+        {"path": "frontend_hybrid/src/services/DevLogService.js", "component": "Collabra Frontend", "reason": "activation polling, event queue and batch ingest"},
+    ]
+    if any(str(event.get("source") or "") == "frontend" or str(event.get("event_code") or "").startswith("DL-FE-") for event in events):
+        related_files.append({"path": "frontend_hybrid/src/core/contexts/ChatContextV2.jsx", "component": "Collabra Frontend", "reason": "message send, realtime, reconcile, receipt and visibility events"})
+    if coverage.get("backend_send") or "backend_send" in missing_coverage:
+        related_files.extend([
+            {"path": "backend/advisor/api/api_chat.py", "component": "Collabra Backend", "reason": "DevLog headers and send-request collector boundary"},
+            {"path": "backend/advisor/api/chat_logic.py", "component": "Collabra Backend", "reason": "send_message_v5 milestones and backend DevLog events"},
+        ])
+    if coverage.get("worker_notification"):
+        related_files.append({"path": "docs/80-operational-assets/workers/fcm-notify-worker.js", "component": "Cloudflare Worker", "reason": "notification outcome and message_notify_dedupe writer"})
+
+    related_documents = [
+        {"path": "docs/10-collabra/1004-0134-01-FA-TECH-Develop_Log_Instrumentation_Protocol.md", "title": "DevLog Instrumentation Protocol"},
+        {"path": "docs/10-collabra/1004-0134-01-FA-MGMT-Develop_Log_Executive_Guide.md", "title": "DevLog Executive Guide"},
+        {"path": "docs/00-global/0016-0201-01-FA-CTRL-Console_Interaction_Request_Response_Log.md", "title": "Console request 2084"},
+        {"path": "docs/10-collabra/1004-0125-01-FA-TECH-Send_Receive_Message_V5.md", "title": "Send/Receive Message V5"},
+    ]
+    if coverage.get("worker_notification"):
+        related_documents.append({"path": "docs/60-database/6006-0001-01-FA-TECH-Database_Schema_Specifications.md", "title": "Database schema and message_notify_dedupe contract"})
+
+    partial_trace = next((trace for trace in analytics.get("traces") or [] if trace.get("kind") == "outgoing_partial"), None)
+    if attention:
+        next_action = f"Inspect the first flagged trace ({next((trace.get('trace_id') for trace in analytics.get('traces') or [] if trace.get('attention_flags')), 'unknown')}) against the listed source file before changing product behavior."
+    elif partial_trace:
+        next_action = f"Capture one fresh send on the same device and verify OPTIMISTIC-CREATED, HTTP-START and backend milestones for trace {partial_trace.get('trace_id')}; if they remain absent, inspect the listed frontend send instrumentation."
+    elif not message_trace_count:
+        next_action = "Send one fresh test message while this DevLog case is active, then refresh the case before drawing a conclusion."
+    elif is_active:
+        next_action = "Complete the intended reproduction, stop capture, refresh once, and use the final snapshot for the incident conclusion."
+    else:
+        next_action = "Attach the customer reproduction note or screenshot and compare this final trace with the expected message lifecycle before assigning a code change."
+
+    return {
+        "analysis_version": 1,
+        "generated_at": _utc_iso(),
+        "snapshot_status": snapshot_status,
+        "classification": classification,
+        "severity": severity,
+        "confidence": confidence,
+        "confidence_basis": f"{critical_coverage}/4 core stages captured; snapshot={'active' if is_active else 'stopped'}; message_traces={message_trace_count}.",
+        "management_summary": management,
+        "technical_analysis": technical,
+        "captured_evidence": captured_coverage,
+        "missing_evidence": missing_coverage,
+        "data_quality": {"collector_ingest_delay_ms": collector_stats},
+        "related_files": related_files,
+        "related_documents": related_documents,
+        "next_diagnostic_action": next_action,
+        "limitations": [
+            "Deterministic interpretation uses captured evidence only and does not infer success or failure for missing stages.",
+            "Collector arrival estimates use client/server wall clocks and are not added to product latency.",
+            "Selective DevLog cases are incident evidence, not population-level SLA monitoring.",
+        ],
+    }
+
+
 def _build_case_analytics(
     events: list[dict[str, Any]],
     devices: list[dict[str, Any]],
     notification_evidence: dict[str, Any] | None = None,
+    manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     notification_evidence = notification_evidence or {"available": False, "rows": [], "counts": {}, "reason_code": "not_queried"}
     notification_rows = notification_evidence.get("rows") if isinstance(notification_evidence.get("rows"), list) else []
@@ -446,8 +622,16 @@ def _build_case_analytics(
             if value is not None and key in latency_buckets:
                 latency_buckets[key].append(float(value))
 
+        outgoing_marker = bool(optimistic or http_start or http_ack or http_error or backend_rpc or backend_saved or backend_post)
+        if not outgoing_marker:
+            outgoing_marker = any(
+                "http_ack" in str(event.get("reason_code") or "").lower()
+                or "http_ack" in str((event.get("details") if isinstance(event.get("details"), dict) else {}).get("source") or "").lower()
+                for event in reconcile_events
+            )
         flags = []
         ordering_notes = []
+        evidence_gaps = []
         if http_start and not http_ack:
             flags.append("missing_http_ack")
         if http_error:
@@ -456,18 +640,24 @@ def _build_case_analytics(
             flags.append("missing_canonical_observation")
         if latency["ack_to_canonical_ms"] is not None and latency["ack_to_canonical_ms"] < 0:
             ordering_notes.append(f"canonical_arrived_before_http_ack:{abs(latency['ack_to_canonical_ms']):g}ms")
-        if http_start and reconcile_counts["insert"]:
+        if outgoing_marker and reconcile_counts["insert"]:
             flags.append("outgoing_reconcile_insert")
-        if http_start and identity_counts["not_matched"]:
+        if outgoing_marker and identity_counts["not_matched"]:
             flags.append("outgoing_identity_no_match")
-        if http_start and read_observed and not delivered_observed:
+        if outgoing_marker and read_observed and not delivered_observed:
             flags.append("read_observed_without_delivered_event")
+        if outgoing_marker and not http_start:
+            evidence_gaps.append("missing_http_start")
+        if outgoing_marker and not optimistic:
+            evidence_gaps.append("missing_optimistic_created")
+        if outgoing_marker and not any((backend_rpc, backend_saved, backend_post)):
+            evidence_gaps.append("missing_backend_send_milestones")
 
         first_identity = next((event for event in ordered if event.get("client_message_id")), None)
         first_message = next((event for event in (canonical, http_ack) if event and event.get("message_id")), None)
         if not first_message:
             first_message = next((event for event in ordered if event.get("message_id")), None)
-        trace_kind = "outgoing_send" if http_start else "observed_incoming_or_realtime" if canonical else "auxiliary"
+        trace_kind = "outgoing_send" if http_start else "outgoing_partial" if outgoing_marker else "observed_incoming_or_realtime" if canonical else "auxiliary"
         message_id = (first_message or {}).get("message_id")
         matched_notification_rows = notification_by_message.get(str(message_id), []) if message_id else []
         if any(row.get("notify_state") == "failed" for row in matched_notification_rows):
@@ -495,6 +685,7 @@ def _build_case_analytics(
             "latency": {key: _rounded(value) for key, value in latency.items()},
             "attention_flags": flags,
             "ordering_notes": ordering_notes,
+            "evidence_gaps": evidence_gaps,
             "notification_worker": {
                 "outcome_count": len(matched_notification_rows),
                 "states": dict(sorted({
@@ -505,10 +696,11 @@ def _build_case_analytics(
             },
         })
 
-    trace_analysis.sort(key=lambda item: (item["kind"] != "outgoing_send", item["trace_id"]))
+    trace_analysis.sort(key=lambda item: (item["kind"] not in {"outgoing_send", "outgoing_partial"}, item["trace_id"]))
     codes = set(event_code_counts)
     coverage = {
         "optimistic_created": "DL-FE-OPTIMISTIC-CREATED" in codes,
+        "http_start": "DL-FE-HTTP-START" in codes,
         "http_ack": "DL-FE-HTTP-ACK" in codes,
         "backend_send": any(code.startswith("DL-BE-SEND-") for code in codes),
         "canonical_observed": "DL-FE-CANONICAL-OBSERVED" in codes,
@@ -518,19 +710,23 @@ def _build_case_analytics(
         "visibility_lifecycle": any("VISIBLE" in code or "VISIBILITY" in code for code in codes),
         "worker_notification": bool(notification_rows) or any(code.startswith("DL-WK-") or "NOTIFY" in code for code in codes),
     }
-    outgoing = [item for item in trace_analysis if item["kind"] == "outgoing_send"]
+    outgoing_complete = [item for item in trace_analysis if item["kind"] == "outgoing_send"]
+    outgoing_partial = [item for item in trace_analysis if item["kind"] == "outgoing_partial"]
+    outgoing = [*outgoing_complete, *outgoing_partial]
     incoming = [item for item in trace_analysis if item["kind"] == "observed_incoming_or_realtime"]
     auxiliary = [item for item in trace_analysis if item["kind"] == "auxiliary"]
     attention = sorted({flag for item in trace_analysis for flag in item["attention_flags"]})
     ordering_notes = sorted({note for item in trace_analysis for note in item["ordering_notes"]})
-    return {
-        "schema_version": 1,
+    analytics = {
+        "schema_version": 2,
         "computed_at": _utc_iso(),
         "summary": {
             "event_count": len(events),
             "trace_count": len(trace_analysis),
             "device_count": len(devices),
             "outgoing_send_trace_count": len(outgoing),
+            "outgoing_complete_trace_count": len(outgoing_complete),
+            "outgoing_partial_trace_count": len(outgoing_partial),
             "observed_incoming_trace_count": len(incoming),
             "auxiliary_trace_count": len(auxiliary),
             "attention_flag_count": sum(len(item["attention_flags"]) for item in trace_analysis),
@@ -554,6 +750,8 @@ def _build_case_analytics(
         },
         "traces": trace_analysis,
     }
+    analytics["interpretation"] = _build_case_interpretation(analytics, events, devices, manifest or {})
+    return analytics
 
 
 def _case_response(manifest: dict[str, Any], *, include_events: bool = False) -> dict[str, Any]:
@@ -570,7 +768,7 @@ def _case_response(manifest: dict[str, Any], *, include_events: bool = False) ->
         "artifacts": _list_artifacts(str(manifest.get("case_id") or "")),
         "event_count": len(events),
         "notification_evidence": notification_evidence,
-        "analytics": _build_case_analytics(events, devices, notification_evidence),
+        "analytics": _build_case_analytics(events, devices, notification_evidence, manifest),
         "storage_path": f"gs://{BUCKET_NAME}/{_case_prefix(str(manifest.get('case_id') or ''))}/",
     }
 
@@ -782,6 +980,21 @@ def _analytics_csv_rows(analytics: dict[str, Any]) -> list[dict[str, Any]]:
         rows.append({"row_type": "latency_summary", "metric": metric, **(stats or {})})
     for metric, value in (analytics.get("coverage") or {}).items():
         rows.append({"row_type": "coverage", "metric": metric, "value": value})
+    interpretation = analytics.get("interpretation") if isinstance(analytics.get("interpretation"), dict) else {}
+    for metric in ("analysis_version", "snapshot_status", "classification", "severity", "confidence", "confidence_basis", "next_diagnostic_action"):
+        rows.append({"row_type": "case_analysis", "analysis_section": "metadata", "metric": metric, "value": interpretation.get(metric)})
+    for section_key in ("management_summary", "technical_analysis", "captured_evidence", "missing_evidence", "limitations"):
+        for index, value in enumerate(interpretation.get(section_key) or [], start=1):
+            rows.append({"row_type": "case_analysis", "analysis_section": section_key, "metric": index, "value": value})
+    for reference_kind in ("related_files", "related_documents"):
+        for reference in interpretation.get(reference_kind) or []:
+            rows.append({
+                "row_type": "case_analysis_reference",
+                "analysis_section": reference_kind,
+                "reference_path": reference.get("path"),
+                "reference_title": reference.get("title") or reference.get("component"),
+                "value": reference.get("reason"),
+            })
     for trace in analytics.get("traces") or []:
         latency = trace.get("latency") if isinstance(trace.get("latency"), dict) else {}
         reconcile = trace.get("reconcile") if isinstance(trace.get("reconcile"), dict) else {}
@@ -816,6 +1029,7 @@ def _analytics_csv_rows(analytics: dict[str, Any]) -> list[dict[str, Any]]:
             "identity_not_matched": identity.get("not_matched"),
             "attention_flags": "|".join(trace.get("attention_flags") or []),
             "ordering_notes": "|".join(trace.get("ordering_notes") or []),
+            "evidence_gaps": "|".join(trace.get("evidence_gaps") or []),
             "event_sequence": " > ".join(trace.get("event_sequence") or []),
             "worker_notification_outcome_count": notification.get("outcome_count"),
             "worker_notification_states": json.dumps(notification.get("states") or {}, sort_keys=True),
@@ -923,7 +1137,7 @@ def _outgoing_mermaid(trace: dict[str, Any], graph_index: int) -> str:
         worker_state = ", ".join(f"{key}:{value}" for key, value in states.items()) or "outcome captured"
         attempts = sum(int(_number(row.get("attempts")) or 0) for row in notification_rows)
         lines.extend([
-            f"{prefix}worker[\"{_mermaid_node_label('Notification Worker', worker_latency, f'{worker_state}; attempts:{attempts}')}\"]",
+            f"{prefix}worker[\"{_mermaid_node_label('Notification Worker', worker_latency, f'{worker_state}; retry count:{attempts}')}\"]",
             f"{prefix}saved -.->|\"DB webhook / dedupe outcome\"| {prefix}worker",
             f"class {prefix}worker {'attention' if any(row.get('notify_state') == 'failed' for row in notification_rows) else 'captured'}",
         ])
@@ -1035,8 +1249,9 @@ def _build_html_export(snapshot: dict[str, Any]) -> str:
     events_by_trace: dict[str, list[dict[str, Any]]] = {}
     for event in events:
         events_by_trace.setdefault(str(event.get("trace_id") or "untraced"), []).append(event)
-    outgoing = [trace for trace in analytics.get("traces") or [] if trace.get("kind") == "outgoing_send"]
+    outgoing = [trace for trace in analytics.get("traces") or [] if trace.get("kind") in {"outgoing_send", "outgoing_partial"}]
     incoming = [trace for trace in analytics.get("traces") or [] if trace.get("kind") == "observed_incoming_or_realtime"]
+    interpretation = analytics.get("interpretation") if isinstance(analytics.get("interpretation"), dict) else {}
     graph_index = 0
 
     def trace_cards(traces: list[dict[str, Any]], direction: str) -> str:
@@ -1046,14 +1261,14 @@ def _build_html_export(snapshot: dict[str, Any]) -> str:
             graph_index += 1
             trace_id = str(trace.get("trace_id") or "untraced")
             trace_events = events_by_trace.get(trace_id, [])
-            graph = _outgoing_mermaid(trace, graph_index) if direction == "outgoing" else _incoming_mermaid(trace, trace_events, graph_index)
+            graph = _outgoing_mermaid(trace, graph_index) if trace.get("kind") == "outgoing_send" else _incoming_mermaid(trace, trace_events, graph_index)
             flags = ", ".join(trace.get("attention_flags") or []) or "No deterministic error flag captured"
             ordering = ", ".join(trace.get("ordering_notes") or []) or "No special ordering note"
             notification = trace.get("notification_worker") if isinstance(trace.get("notification_worker"), dict) else {}
             notification_summary = ", ".join(f"{key}={value}" for key, value in (notification.get("states") or {}).items()) or "No matching Worker outcome"
             cards.append(f"""
 <article class="message-card {direction}">
-  <header><div><span class="direction">{_html(direction.upper())}</span><h3>{_html(trace.get('message_id') or trace.get('client_message_id') or trace_id)}</h3></div><span>{_html(trace.get('device_session_ref'))}</span></header>
+  <header><div><span class="direction">{_html('OUTGOING PARTIAL' if trace.get('kind') == 'outgoing_partial' else direction.upper())}</span><h3>{_html(trace.get('message_id') or trace.get('client_message_id') or trace_id)}</h3></div><span>{_html(trace.get('device_session_ref'))}</span></header>
   <div class="ids"><b>Trace:</b> <code>{_html(trace_id)}</code> · <b>Conversation:</b> <code>{_html(trace.get('conversation_id'))}</code> · <b>Events:</b> {_html(trace.get('event_count'))}</div>
   <div class="mermaid-wrap"><pre class="mermaid">{_html(graph)}</pre></div>
   <p class="flags"><b>Error/attention evidence:</b> {_html(flags)}</p>
@@ -1072,16 +1287,25 @@ def _build_html_export(snapshot: dict[str, Any]) -> str:
         f'<li><b>{_html(device.get("device_key"))}</b> — {_html(device.get("os"))} / {_html(device.get("browser"))} / {_html(device.get("runtime_kind"))} / {_html(device.get("frontend_version"))}</li>'
         for device in snapshot.get("devices") or []
     ) or "<li>No device captured.</li>"
+    management_items = "".join(f"<li>{_html(item)}</li>" for item in interpretation.get("management_summary") or []) or "<li>No management conclusion available.</li>"
+    technical_items = "".join(f"<li>{_html(item)}</li>" for item in interpretation.get("technical_analysis") or []) or "<li>No technical conclusion available.</li>"
+    limitation_items = "".join(f"<li>{_html(item)}</li>" for item in interpretation.get("limitations") or [])
+    reference_rows = "".join(
+        f"<tr><td>{_html(kind)}</td><td><code>{_html(item.get('path'))}</code></td><td>{_html(item.get('title') or item.get('component'))}</td><td>{_html(item.get('reason'))}</td></tr>"
+        for kind, items in (("Code", interpretation.get("related_files") or []), ("Document", interpretation.get("related_documents") or []))
+        for item in items
+    ) or '<tr><td colspan="4">No reference mapping available.</td></tr>'
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DevLog {_html(manifest.get('case_id'))}</title>
 <style>
-:root{{--bg:#07111d;--panel:#101d2b;--text:#eaf2ff;--muted:#9fb0c5;--green:#66e2a7;--orange:#ffbd66;--red:#ff7b72;--line:#2b3b4f}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Inter,Segoe UI,Arial,sans-serif}}main{{max-width:1500px;margin:auto;padding:24px}}h1,h2,h3{{margin:.2em 0}}code{{overflow-wrap:anywhere}}.hero,.message-card,.overview{{border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:18px;margin-bottom:18px}}.hero-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:14px}}.metric{{padding:12px;border-radius:10px;background:#162536}}.metric b{{display:block;font-size:24px}}.muted,.ids,.message-card>header>span{{color:var(--muted)}}.coverage-list{{display:flex;flex-wrap:wrap;gap:7px}}.coverage{{padding:5px 8px;border-radius:999px;font-size:11px}}.coverage.yes{{color:var(--green);background:#123526}}.coverage.no{{color:var(--orange);background:#3a2b13}}.message-card>header{{display:flex;justify-content:space-between;gap:14px;align-items:center}}.direction{{display:inline-block;padding:3px 7px;border-radius:6px;background:#1f3550;color:#9ad5ff;font-size:11px;font-weight:700}}.message-card.incoming .direction{{background:#15392b;color:var(--green)}}.mermaid-wrap,.table-wrap{{overflow:auto;margin-top:12px;padding:10px;border-radius:10px;background:#fff;color:#111}}.mermaid{{min-width:1100px}}table{{width:100%;border-collapse:collapse;font-size:12px}}th,td{{padding:7px;border:1px solid #ccd3dd;text-align:left;vertical-align:top}}td code{{white-space:pre-wrap}}.flags{{padding:9px;border-left:4px solid var(--orange);background:#2b2418}}.ordering{{padding:9px;border-left:4px solid #60a5fa;background:#152943}}.worker{{padding:9px;border-left:4px solid var(--green);background:#123526}}details summary{{cursor:pointer;font-weight:700}}.empty{{color:var(--muted)}}@media print{{body{{background:#fff;color:#111}}main{{max-width:none;padding:0}}.hero,.message-card,.overview{{break-inside:avoid;border-color:#bbb;background:#fff}}details{{display:block}}details>summary{{display:none}}details>*{{display:block!important}}.mermaid-wrap{{overflow:visible}}}}
+:root{{--bg:#07111d;--panel:#101d2b;--text:#eaf2ff;--muted:#9fb0c5;--green:#66e2a7;--orange:#ffbd66;--red:#ff7b72;--line:#2b3b4f}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Inter,Segoe UI,Arial,sans-serif}}main{{max-width:1500px;margin:auto;padding:24px}}h1,h2,h3{{margin:.2em 0}}code{{overflow-wrap:anywhere}}.hero,.message-card,.overview{{border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:18px;margin-bottom:18px}}.hero-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:14px}}.metric{{padding:12px;border-radius:10px;background:#162536}}.metric b{{display:block;font-size:24px}}.muted,.ids,.message-card>header>span{{color:var(--muted)}}.analysis-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px}}.analysis-box{{padding:14px;border:1px solid var(--line);border-radius:12px;background:#162536}}.analysis-meta{{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}}.analysis-meta span{{padding:5px 8px;border-radius:999px;background:#1f3550}}.next-action{{padding:12px;border-left:4px solid var(--orange);background:#2b2418}}.coverage-list{{display:flex;flex-wrap:wrap;gap:7px}}.coverage{{padding:5px 8px;border-radius:999px;font-size:11px}}.coverage.yes{{color:var(--green);background:#123526}}.coverage.no{{color:var(--orange);background:#3a2b13}}.message-card>header{{display:flex;justify-content:space-between;gap:14px;align-items:center}}.direction{{display:inline-block;padding:3px 7px;border-radius:6px;background:#1f3550;color:#9ad5ff;font-size:11px;font-weight:700}}.message-card.incoming .direction{{background:#15392b;color:var(--green)}}.mermaid-wrap,.table-wrap{{overflow:auto;margin-top:12px;padding:10px;border-radius:10px;background:#fff;color:#111}}.mermaid{{min-width:1100px}}table{{width:100%;border-collapse:collapse;font-size:12px}}th,td{{padding:7px;border:1px solid #ccd3dd;text-align:left;vertical-align:top}}td code{{white-space:pre-wrap}}.flags{{padding:9px;border-left:4px solid var(--orange);background:#2b2418}}.ordering{{padding:9px;border-left:4px solid #60a5fa;background:#152943}}.worker{{padding:9px;border-left:4px solid var(--green);background:#123526}}details summary{{cursor:pointer;font-weight:700}}.empty{{color:var(--muted)}}@media print{{body{{background:#fff;color:#111}}main{{max-width:none;padding:0}}.hero,.message-card,.overview{{break-inside:avoid;border-color:#bbb;background:#fff}}details{{display:block}}details>summary{{display:none}}details>*{{display:block!important}}.mermaid-wrap{{overflow:visible}}}}
 </style>
 <script type="module">import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';mermaid.initialize({{startOnLoad:true,securityLevel:'strict',theme:'neutral',flowchart:{{htmlLabels:true,useMaxWidth:false}}}});</script>
 </head><body><main>
 <section class="hero"><h1>DevLog Visual Message Path</h1><p class="muted">Case {_html(manifest.get('case_id'))} · User {_html(manifest.get('user_label') or manifest.get('user_id'))} · Exported {_html(snapshot.get('exported_at'))}</p>
 <div class="hero-grid"><div class="metric">Events<b>{_html(summary.get('event_count'))}</b></div><div class="metric">Outgoing<b>{_html(summary.get('outgoing_send_trace_count'))}</b></div><div class="metric">Incoming<b>{_html(summary.get('observed_incoming_trace_count'))}</b></div><div class="metric">Devices<b>{_html(summary.get('device_count'))}</b></div><div class="metric">Attention flags<b>{_html(summary.get('attention_flag_count'))}</b></div><div class="metric">Ordering notes<b>{_html(summary.get('ordering_note_count'))}</b></div></div></section>
+<section class="overview"><h2>Deterministic case analysis</h2><div class="analysis-meta"><span>Snapshot: {_html(interpretation.get('snapshot_status'))}</span><span>Classification: {_html(interpretation.get('classification'))}</span><span>Severity: {_html(interpretation.get('severity'))}</span><span>Confidence: {_html(interpretation.get('confidence'))}</span></div><p class="muted">{_html(interpretation.get('confidence_basis'))}</p><div class="analysis-grid"><div class="analysis-box"><h3>Management analysis</h3><ul>{management_items}</ul></div><div class="analysis-box"><h3>Technical analysis</h3><ul>{technical_items}</ul></div></div><p class="next-action"><b>Next diagnostic action:</b> {_html(interpretation.get('next_diagnostic_action'))}</p><details><summary>Related code files, documents and limitations</summary><div class="table-wrap"><table><thead><tr><th>Type</th><th>Path</th><th>Component / title</th><th>Reason</th></tr></thead><tbody>{reference_rows}</tbody></table></div><h3>Limitations</h3><ul>{limitation_items}</ul></details></section>
 <section class="overview"><h2>Evidence coverage</h2><p class="muted">NOT CAPTURED means no matching DevLog event or Worker outcome exists; it does not mean the product state did not happen.</p><div class="coverage-list">{coverage}</div><h2>Devices</h2><ul>{device_cards}</ul></section>
 <h2>Sent messages — one graph per message</h2>{trace_cards(outgoing, 'outgoing')}
 <h2>Received messages — one graph per message</h2>{trace_cards(incoming, 'incoming')}
@@ -1099,7 +1323,7 @@ def export_devlog_case(case_id: str):
     events, devices = _load_case_events(case_id)
     artifacts = _list_artifacts(case_id)
     notification_evidence = _load_notification_evidence(events)
-    analytics = _build_case_analytics(events, devices, notification_evidence)
+    analytics = _build_case_analytics(events, devices, notification_evidence, manifest)
     snapshot = {
         "schema_version": 1,
         "exported_at": _utc_iso(),
@@ -1136,6 +1360,7 @@ def export_devlog_case(case_id: str):
     elif export_format in {"md", "markdown"}:
         summary = analytics["summary"]
         latency_stats = analytics["latency_stats"]
+        interpretation = analytics.get("interpretation") or {}
         lines = [
             f"# DevLog Case {case_id}",
             "",
@@ -1146,6 +1371,41 @@ def export_devlog_case(case_id: str):
             f"- Events: `{len(events)}`",
             f"- Devices: `{len(devices)}`",
             f"- Retention: `{snapshot['countdown']['label']}`",
+            "",
+            "## Deterministic Case Analysis",
+            "",
+            f"- Snapshot: `{interpretation.get('snapshot_status')}`",
+            f"- Classification: `{interpretation.get('classification')}`",
+            f"- Severity: `{interpretation.get('severity')}`",
+            f"- Confidence: `{interpretation.get('confidence')}` — {interpretation.get('confidence_basis')}",
+            "",
+            "### Management Analysis",
+            "",
+        ]
+        lines.extend([f"- {item}" for item in interpretation.get("management_summary") or []] or ["- No management conclusion available."])
+        lines.extend(["", "### Technical Analysis", ""])
+        lines.extend([f"- {item}" for item in interpretation.get("technical_analysis") or []] or ["- No technical conclusion available."])
+        lines.extend([
+            "",
+            f"### Next Diagnostic Action",
+            "",
+            str(interpretation.get("next_diagnostic_action") or "No next action computed."),
+            "",
+            "### Related Code Files",
+            "",
+        ])
+        lines.extend([
+            f"- `{item.get('path')}` — {item.get('component')}: {item.get('reason')}"
+            for item in interpretation.get("related_files") or []
+        ] or ["- No related code file mapped."])
+        lines.extend(["", "### Related Documents", ""])
+        lines.extend([
+            f"- `{item.get('path')}` — {item.get('title')}"
+            for item in interpretation.get("related_documents") or []
+        ] or ["- No related document mapped."])
+        lines.extend(["", "### Analysis Limitations", ""])
+        lines.extend([f"- {item}" for item in interpretation.get("limitations") or []])
+        lines.extend([
             "",
             "## Computed Analysis",
             "",
@@ -1159,7 +1419,7 @@ def export_devlog_case(case_id: str):
             "",
             "| Metric | Count | Min ms | Avg ms | Median ms | P95 ms | Max ms |",
             "|---|---:|---:|---:|---:|---:|---:|",
-        ]
+        ])
         lines.extend([
             f"| `{metric}` | {stats.get('count')} | {stats.get('min_ms')} | {stats.get('avg_ms')} | {stats.get('median_ms')} | {stats.get('p95_ms')} | {stats.get('max_ms')} |"
             for metric, stats in latency_stats.items()
@@ -1177,7 +1437,7 @@ def export_devlog_case(case_id: str):
             f"- Source: `message_notify_dedupe`; query available: `{analytics['notification_worker']['evidence_available']}`; query latency: `{analytics['notification_worker'].get('query_latency_ms')}` ms; reason: `{analytics['notification_worker'].get('reason_code') or '—'}`",
             f"- Outcomes: `{json.dumps(analytics['notification_worker'].get('counts') or {}, sort_keys=True)}`",
             "",
-            "| Message | Recipient | Route | State | Attempts | Created → Sent ms | Error code |",
+            "| Message | Recipient | Route | State | Retry count | Created → Sent ms | Error code |",
             "|---|---|---|---|---:|---:|---|",
         ])
         lines.extend([
@@ -1207,6 +1467,7 @@ def export_devlog_case(case_id: str):
                 flags=", ".join([
                     *[f"attention:{flag}" for flag in trace.get("attention_flags") or []],
                     *[f"ordering:{note}" for note in trace.get("ordering_notes") or []],
+                    *[f"gap:{gap}" for gap in trace.get("evidence_gaps") or []],
                 ]) or "—",
             )
             for trace in analytics["traces"]
