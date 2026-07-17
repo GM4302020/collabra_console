@@ -808,6 +808,53 @@ export function repairUserOpsActiveBanner(params: {
   });
 }
 
+export type UserOpsUnreadConversation = {
+  conversation_id: string;
+  unread_count: number;
+  delivered_unread: number;
+  stuck_sent: number;
+  legacy_inconsistent: number;
+  counterparts: string[];
+};
+
+export type UserOpsUnreadTotals = {
+  unread_count_total: number;
+  delivered_unread_total: number;
+  stuck_sent_total: number;
+  legacy_inconsistent_total: number;
+  worker_badge_formula_total: number;
+};
+
+export type UserOpsUnreadDiagnosticsResponse = {
+  status: string;
+  mode?: string;
+  message?: string;
+  timestamp?: string;
+  user_id?: string;
+  totals: UserOpsUnreadTotals;
+  conversations: UserOpsUnreadConversation[];
+  results?: Array<{ conversation_id: string; action: string; messages_marked_read: number; participant_rows: number }>;
+};
+
+export function fetchUserUnreadDiagnostics(userId: string): Promise<UserOpsUnreadDiagnosticsResponse> {
+  return getJson<UserOpsUnreadDiagnosticsResponse>(`/api/console/users/${encodeURIComponent(userId)}/unread-diagnostics`);
+}
+
+export function repairUserUnread(params: {
+  user_id: string;
+  conversation_id: string;
+  action: 'mark_read_and_sync' | 'set_unread';
+  value?: number;
+}): Promise<UserOpsUnreadDiagnosticsResponse> {
+  return postJson<UserOpsUnreadDiagnosticsResponse>('/api/console/users/repair-unread', {
+    user_id: params.user_id,
+    conversation_id: params.conversation_id,
+    action: params.action,
+    value: params.value,
+    confirmation: 'REPAIR',
+  });
+}
+
 export function fetchDevLogCases(userId: string): Promise<DevLogCasesResponse> {
   return getJson<DevLogCasesResponse>(`/api/console/devlog/cases?user_id=${encodeURIComponent(userId)}`);
 }

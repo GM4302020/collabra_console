@@ -367,3 +367,86 @@ def test_profile_params_keeps_computed_sort_client_side():
     )
 
     assert params["order"] == "joined_at.desc,user_id.desc"
+
+
+def test_unread_diagnostics_aggregates_badge_sources(monkeypatch):
+    def fake_get_json(table, params, prefer_count=False, timeout=12):
+        if table == "conversation_participants" and params.get("select") == "conversation_id,unread_count":
+            return ([
+                {"conversation_id": "conv-1", "unread_count": 2},
+                {"conversation_id": "conv-2", "unread_count": 0},
+            ], None)
+        if table == "messages":
+            return ([
+                {"conversation_id": "conv-1", "status": "delivered", "is_read": False},
+                {"conversation_id": "conv-1", "status": "delivered", "is_read": False},
+                {"conversation_id": "conv-2", "status": "sent", "is_read": False},
+                {"conversation_id": "conv-2", "status": "delivered", "is_read": True},
+            ], None)
+        if table == "conversation_participants" and params.get("select") == "conversation_id,user_id":
+            return ([
+                {"conversation_id": "conv-1", "user_id": "other-1"},
+                {"conversation_id": "conv-2", "user_id": "other-2"},
+            ], None)
+        if table == "profiles":
+            return ([
+                {"user_id": "other-1", "email": "o1@example.com", "full_name": "Other One"},
+            ], None)
+        return ([], None)
+
+    monkeypatch.setattr(user_ops_routes, "_get_json", fake_get_json)
+
+    diagnostics = user_ops_routes._unread_diagnostics("user-1")
+
+    assert diagnostics["totals"] == {
+        "unread_count_total": 2,
+        "delivered_unread_total": 2,
+        "stuck_sent_total": 1,
+        "legacy_inconsistent_total": 1,
+        "worker_badge_formula_total": 3,
+    }
+    by_id = {item["conversation_id"]: item for item in diagnostics["conversations"]}
+    assert by_id["conv-1"]["delivered_unread"] == 2
+    assert by_id["conv-1"]["counterparts"] == ["Other One"]
+    assert by_id["conv-2"]["stuck_sent"] == 1
+    assert by_id["conv-2"]["legacy_inconsistent"] == 1
+
+
+def test_repair_unread_conversation_marks_read_and_zeroes(monkeypatch):
+    patched = []
+
+    def fake_patch_json(table, filters, payload, timeout=12):
+        patched.append((table, filters, payload))
+        return [{"ok": True}]
+
+    monkeypatch.setattr(user_ops_routes, "_patch_json", fake_patch_json)
+
+    result = user_ops_routes._repair_unread_conversation("user-1", "conv-1", "mark_read_and_sync", None)
+
+    assert result["messages_marked_read"] == 1
+    assert result["participant_rows"] == 1
+    message_patch = patched[0]
+    assert message_patch[0] == "messages"
+    assert message_patch[1]["status"] == "neq.read"
+    assert message_patch[1]["or"] == "(is_read.is.null,is_read.eq.false)"
+    assert message_patch[2]["status"] == "read"
+    assert message_patch[2]["is_read"] is True
+    participant_patch = patched[1]
+    assert participant_patch[0] == "conversation_participants"
+    assert participant_patch[2] == {"unread_count": 0}
+
+
+def test_repair_unread_set_value(monkeypatch):
+    patched = []
+
+    def fake_patch_json(table, filters, payload, timeout=12):
+        patched.append((table, filters, payload))
+        return [{"ok": True}]
+
+    monkeypatch.setattr(user_ops_routes, "_patch_json", fake_patch_json)
+
+    result = user_ops_routes._repair_unread_conversation("user-1", "conv-1", "set_unread", 5)
+
+    assert result["participant_rows"] == 1
+    assert patched[0][0] == "conversation_participants"
+    assert patched[0][2] == {"unread_count": 5}

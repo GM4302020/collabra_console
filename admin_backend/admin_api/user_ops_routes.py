@@ -976,6 +976,232 @@ def user_operations_avatar_url():
     })
 
 
+# --- Unread / badge-offset diagnostics and controlled repair (Request 2086) -------
+# The OS icon badge base observed on devices comes straight from the DB unread state:
+# conversation_participants.unread_count feeds the in-app badge at startup, and the
+# worker badge formula counts incoming messages with status<>'read' and is_read not
+# true. These endpoints expose exactly those fields per conversation (read-only) and
+# allow an audited owner repair/override for testing and clearing stale offsets.
+
+UNREAD_REPAIR_MAX_CONVERSATIONS = 200
+
+
+def _unread_message_filters(user_id: str, conversation_filter: str) -> dict[str, str]:
+    return {
+        "advisor_id": f"eq.{ADVISOR_ID}",
+        "conversation_id": conversation_filter,
+        "sender_id": f"neq.{user_id}",
+        "status": "neq.read",
+        "or": "(is_read.is.null,is_read.eq.false)",
+    }
+
+
+def _unread_diagnostics(user_id: str) -> dict:
+    participant_rows, _total = _get_json(
+        "conversation_participants",
+        {"select": "conversation_id,unread_count", "user_id": f"eq.{user_id}", "limit": "2000"},
+        timeout=12,
+    )
+    per_conversation: dict[str, dict] = {}
+    for row in participant_rows:
+        conversation_id = str(row.get("conversation_id") or "")
+        if not conversation_id:
+            continue
+        per_conversation[conversation_id] = {
+            "conversation_id": conversation_id,
+            "unread_count": _to_int(row.get("unread_count")),
+            "delivered_unread": 0,
+            "stuck_sent": 0,
+            "legacy_inconsistent": 0,
+            "counterparts": [],
+        }
+
+    conversation_ids = list(per_conversation)
+    if conversation_ids:
+        message_rows, _mt = _get_json(
+            "messages",
+            {
+                "select": "conversation_id,status,is_read",
+                "advisor_id": f"eq.{ADVISOR_ID}",
+                "conversation_id": f"in.({','.join(conversation_ids)})",
+                "sender_id": f"neq.{user_id}",
+                "status": "neq.read",
+                "limit": "10000",
+            },
+            timeout=12,
+        )
+        for row in message_rows:
+            conversation_id = str(row.get("conversation_id") or "")
+            entry = per_conversation.get(conversation_id)
+            if not entry:
+                continue
+            if bool(row.get("is_read")):
+                entry["legacy_inconsistent"] += 1
+            elif row.get("status") == "delivered":
+                entry["delivered_unread"] += 1
+            elif row.get("status") == "sent":
+                entry["stuck_sent"] += 1
+
+        try:
+            other_rows, _ot = _get_json(
+                "conversation_participants",
+                {
+                    "select": "conversation_id,user_id",
+                    "conversation_id": f"in.({','.join(conversation_ids)})",
+                    "user_id": f"neq.{user_id}",
+                    "limit": "10000",
+                },
+                timeout=12,
+            )
+            other_ids = list({str(row.get("user_id")) for row in other_rows if row.get("user_id")})
+            labels: dict[str, str] = {}
+            if other_ids:
+                profile_rows, _pt = _get_json(
+                    "profiles",
+                    {
+                        "select": "user_id,email,full_name",
+                        "advisor_id": f"eq.{ADVISOR_ID}",
+                        "user_id": f"in.({','.join(other_ids)})",
+                        "limit": "10000",
+                    },
+                    timeout=12,
+                )
+                labels = {
+                    str(profile.get("user_id")): str(profile.get("full_name") or profile.get("email") or profile.get("user_id"))
+                    for profile in profile_rows
+                    if isinstance(profile, dict) and profile.get("user_id")
+                }
+            for row in other_rows:
+                conversation_id = str(row.get("conversation_id") or "")
+                other_id = str(row.get("user_id") or "")
+                entry = per_conversation.get(conversation_id)
+                if entry is not None and other_id:
+                    entry["counterparts"].append(labels.get(other_id, other_id))
+        except Exception:
+            pass  # counterpart labels are cosmetic; diagnostics stay usable without them
+
+    conversations = sorted(
+        per_conversation.values(),
+        key=lambda item: (item["unread_count"], item["delivered_unread"], item["stuck_sent"]),
+        reverse=True,
+    )
+    totals = {
+        "unread_count_total": sum(item["unread_count"] for item in conversations),
+        "delivered_unread_total": sum(item["delivered_unread"] for item in conversations),
+        "stuck_sent_total": sum(item["stuck_sent"] for item in conversations),
+        "legacy_inconsistent_total": sum(item["legacy_inconsistent"] for item in conversations),
+    }
+    totals["worker_badge_formula_total"] = totals["delivered_unread_total"] + totals["stuck_sent_total"]
+    return {"totals": totals, "conversations": conversations}
+
+
+def _repair_unread_conversation(user_id: str, conversation_id: str, action: str, value: int | None) -> dict:
+    if action == "set_unread":
+        rows = _patch_json(
+            "conversation_participants",
+            {"conversation_id": f"eq.{conversation_id}", "user_id": f"eq.{user_id}"},
+            {"unread_count": int(value or 0)},
+        )
+        return {"conversation_id": conversation_id, "action": action, "participant_rows": len(rows), "messages_marked_read": 0}
+
+    # mark_read_and_sync: mark stuck incoming messages read, then zero the counter so
+    # both badge sources (participants counter + worker message formula) agree.
+    marked = _patch_json(
+        "messages",
+        _unread_message_filters(user_id, f"eq.{conversation_id}"),
+        {"status": "read", "is_read": True, "read_at": _now_iso()},
+    )
+    participant_rows = _patch_json(
+        "conversation_participants",
+        {"conversation_id": f"eq.{conversation_id}", "user_id": f"eq.{user_id}"},
+        {"unread_count": 0},
+    )
+    return {
+        "conversation_id": conversation_id,
+        "action": action,
+        "messages_marked_read": len(marked),
+        "participant_rows": len(participant_rows),
+    }
+
+
+@user_ops_bp.get("/api/console/users/<user_id>/unread-diagnostics")
+@require_capability("console.view_user_operations")
+def user_operations_unread_diagnostics(user_id: str):
+    if not UUID_PATTERN.match(str(user_id or "")):
+        return jsonify({"status": "error", "message": "user_id must be a UUID-like value."}), 400
+    try:
+        diagnostics = _unread_diagnostics(str(user_id))
+    except Exception as exc:
+        return jsonify({"status": "error", "message": f"Unread diagnostics failed: {type(exc).__name__}."}), 502
+    return jsonify({"status": "ok", "mode": "read_only", "timestamp": _now_iso(), "user_id": str(user_id), **diagnostics})
+
+
+@user_ops_bp.post("/api/console/users/repair-unread")
+@require_capability("console.repair_user_operations")
+def user_operations_repair_unread():
+    payload = request.get_json(silent=True) or {}
+    user_id = str(payload.get("user_id") or "").strip()
+    conversation_id = str(payload.get("conversation_id") or "").strip()
+    action = str(payload.get("action") or "").strip()
+    confirmation = str(payload.get("confirmation") or "").strip().upper()
+    raw_value = payload.get("value")
+
+    if confirmation != "REPAIR":
+        return jsonify({"status": "error", "message": "confirmation must be REPAIR."}), 400
+    if not UUID_PATTERN.match(user_id):
+        return jsonify({"status": "error", "message": "user_id must be a UUID-like value."}), 400
+    if action not in {"mark_read_and_sync", "set_unread"}:
+        return jsonify({"status": "error", "message": "action must be mark_read_and_sync or set_unread."}), 400
+    if conversation_id != "all" and not UUID_PATTERN.match(conversation_id):
+        return jsonify({"status": "error", "message": "conversation_id must be a UUID or 'all'."}), 400
+    if action == "set_unread":
+        if conversation_id == "all":
+            return jsonify({"status": "error", "message": "set_unread needs a single conversation_id."}), 400
+        value = _to_int(raw_value, -1)
+        if value < 0 or value > 999:
+            return jsonify({"status": "error", "message": "value must be an integer between 0 and 999."}), 400
+    else:
+        value = None
+
+    actor = resolve_actor(request)
+    try:
+        if conversation_id == "all":
+            participant_rows, _total = _get_json(
+                "conversation_participants",
+                {"select": "conversation_id", "user_id": f"eq.{user_id}", "limit": str(UNREAD_REPAIR_MAX_CONVERSATIONS)},
+                timeout=12,
+            )
+            target_conversations = [str(row.get("conversation_id")) for row in participant_rows if row.get("conversation_id")]
+            results = [_repair_unread_conversation(user_id, target, action, value) for target in target_conversations]
+        else:
+            results = [_repair_unread_conversation(user_id, conversation_id, action, value)]
+        diagnostics = _unread_diagnostics(user_id)
+    except Exception as exc:
+        return jsonify({"status": "error", "message": f"Unread repair failed: {type(exc).__name__}."}), 502
+
+    audit_event = {
+        "event": "user_operations.repair_unread",
+        "actor_email": actor.email,
+        "actor_user_id": actor.user_id,
+        "target_user_id": user_id,
+        "conversation_id": conversation_id,
+        "action": action,
+        "value": value,
+        "repaired_conversations": len(results),
+        "timestamp": _now_iso(),
+    }
+    logger.warning("[AdminConsoleAudit] %s", json.dumps(audit_event, sort_keys=True))
+
+    return jsonify({
+        "status": "ok",
+        "mode": "controlled_write",
+        "write_enabled": True,
+        "audit": audit_event,
+        "results": results,
+        **diagnostics,
+    })
+
+
 @user_ops_bp.post("/api/console/users/repair-active-banner")
 @require_capability("console.repair_user_operations")
 def user_operations_repair_active_banner():

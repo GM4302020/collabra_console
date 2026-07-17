@@ -1014,12 +1014,31 @@ def _check_notification_state() -> dict:
         rows, http_status, latency_ms = _read_supabase_rows(
             "message_notify_dedupe",
             {
-                "select": "notify_state,route_selected,last_error,created_at,sent_at",
+                "select": "message_id,notify_state,route_selected,last_error,created_at,sent_at",
                 "advisor_id": f"eq.{ADVISOR_ID}",
                 "created_at": _utc_gte(24),
                 "limit": "1000",
             },
         )
+
+        # Request 73 (list 1 item 1): the pg_net notify trigger fires exactly once; if the
+        # worker was unreachable at that moment, the notification is silently lost and no
+        # dedupe row exists at all. Surface those "no decision record" messages read-only
+        # so the real loss rate is visible before deciding on a retry mechanism.
+        message_rows, _msg_http_status, _msg_latency_ms = _read_supabase_rows(
+            "messages",
+            {
+                "select": "id",
+                "advisor_id": f"eq.{ADVISOR_ID}",
+                "created_at": _utc_gte(24),
+                "limit": "1000",
+            },
+        )
+        dedupe_message_ids = {row.get("message_id") for row in rows if row.get("message_id")}
+        no_decision = sum(
+            1 for row in message_rows if row.get("id") and row.get("id") not in dedupe_message_ids
+        )
+
         sent = sum(1 for row in rows if row.get("notify_state") == "sent")
         failed_rows = [row for row in rows if row.get("notify_state") == "failed"]
         pending = sum(1 for row in rows if row.get("notify_state") == "pending")
@@ -1036,7 +1055,8 @@ def _check_notification_state() -> dict:
             status=status,
             summary=(
                 f"Notification dedupe read {len(rows)} rows (24h): {sent} sent, "
-                f"{real_failed} real-failed, {stale_token_failed} stale-token, {pending} pending."
+                f"{real_failed} real-failed, {stale_token_failed} stale-token, {pending} pending, "
+                f"{no_decision} message(s) without any decision record."
             ),
             latency_ms=latency_ms,
             metrics=[
@@ -1044,6 +1064,7 @@ def _check_notification_state() -> dict:
                 _metric("24h failed (real)", str(real_failed), "warn" if real_failed else "ok"),
                 _metric("24h stale token", str(stale_token_failed), "neutral"),
                 _metric("24h pending", str(pending), "warn" if pending else "ok"),
+                _metric("24h no-decision", str(no_decision), "warn" if no_decision else "ok"),
                 _metric("HTTP", str(http_status), "ok"),
             ],
             links=[_link("Notification worker", "https://api.otmega.com")],

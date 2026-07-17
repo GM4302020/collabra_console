@@ -1,17 +1,20 @@
 // FILE: ~/otmega/otmega_app/console/admin_frontend/src/pages/UserOperationsPage.tsx
 // ماموریت: جدول عملیاتی read-only کاربران، بنرلیست، استفاده و سلامت پیام/نوتیف.
 
-import { Bug, Eye, EyeOff, Grip, Maximize2, RefreshCw, RotateCcw, Search, WrapText, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from 'react';
+import { Bell, Bug, Eye, EyeOff, Grip, Maximize2, RefreshCw, RotateCcw, Search, WrapText, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import {
   fetchConsoleDashboardSettings,
   fetchUserOperations,
+  fetchUserUnreadDiagnostics,
   getUserOpsAvatarUrl,
   repairUserOpsActiveBanner,
+  repairUserUnread,
   saveConsoleDashboardSettingsSection,
   type UserOpsBannerTarget,
   type UserOpsResponse,
   type UserOpsRow,
+  type UserOpsUnreadDiagnosticsResponse,
 } from '../api/consoleApi';
 import DevLogCasePanel from '../components/devlog/DevLogCasePanel';
 
@@ -26,6 +29,7 @@ type UserOpsColumnKey =
   | 'online'
   | 'conversations'
   | 'notifications'
+  | 'unread_badge'
   | 'banner_list'
   | 'devlog'
   | 'refresh';
@@ -43,6 +47,7 @@ type UserOpsColumn = {
     loading: boolean;
     openBannerList: (row: UserOpsRow) => void;
     openDevLog: (row: UserOpsRow) => void;
+    openUnread: (row: UserOpsRow) => void;
   }) => ReactNode;
 };
 
@@ -138,6 +143,20 @@ const USER_OPS_COLUMNS: UserOpsColumn[] = [
     ),
   },
   {
+    key: 'unread_badge',
+    label: 'Unread / Badge',
+    defaultWidth: 170,
+    render: (row, _index, helpers) => (
+      <>
+        <button className="console-icon-text-button" onClick={() => helpers.openUnread(row)} type="button">
+          <Bell aria-hidden="true" size={14} />
+          <span>{row.usage.conversations.unread_total} unread</span>
+        </button>
+        <small>badge base = DB unread</small>
+      </>
+    ),
+  },
+  {
     key: 'banner_list',
     label: 'Banner list',
     defaultWidth: 360,
@@ -227,6 +246,145 @@ type UserOperationsPageProps = {
   canManageDevLog?: boolean;
 };
 
+// Unread / badge-offset diagnostics panel (Request 2086): the on-device icon badge base
+// comes from DB unread state; this panel shows exactly those fields per conversation and
+// (with repair capability) allows an audited clear/override for testing.
+function UnreadDiagnosticsPanel({ row, canRepair, onClose, onRepaired }: { row: UserOpsRow; canRepair: boolean; onClose: () => void; onRepaired: () => void }) {
+  const [data, setData] = useState<UserOpsUnreadDiagnosticsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [overrideValues, setOverrideValues] = useState<Record<string, string>>({});
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setData(await fetchUserUnreadDiagnostics(row.user_id));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Unread diagnostics failed.');
+    } finally {
+      setLoading(false);
+    }
+  }, [row.user_id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const runRepair = useCallback(async (conversationId: string, action: 'mark_read_and_sync' | 'set_unread', value?: number) => {
+    const summary = action === 'set_unread'
+      ? `Set unread_count=${value} for conversation ${conversationId}?`
+      : conversationId === 'all'
+        ? `Mark ALL stuck incoming messages of ${row.email || row.user_id} as read and zero all unread counters?`
+        : `Mark stuck incoming messages of conversation ${conversationId} as read and zero its unread counter?`;
+    if (!window.confirm(`${summary}\n\nThis is an audited controlled write (REPAIR).`)) return;
+
+    setBusy(true);
+    setError(null);
+    try {
+      setData(await repairUserUnread({ user_id: row.user_id, conversation_id: conversationId, action, value }));
+      // Refresh the underlying table so the Unread/Badge column shows the new value
+      // immediately, without a manual page reload.
+      onRepaired();
+    } catch (repairError) {
+      setError(repairError instanceof Error ? repairError.message : 'Unread repair failed.');
+    } finally {
+      setBusy(false);
+    }
+  }, [onRepaired, row.email, row.user_id]);
+
+  const interestingConversations = (data?.conversations || []).filter(
+    (item) => item.unread_count > 0 || item.delivered_unread > 0 || item.stuck_sent > 0 || item.legacy_inconsistent > 0,
+  );
+
+  return (
+    <aside
+      className="user-ops-banner-panel"
+      style={{ height: 560, left: 620, top: 120, width: 620 }}
+    >
+      <header>
+        <Bell aria-hidden="true" size={16} />
+        <div>
+          <strong>Unread / Badge diagnostics — {row.email || row.user_id}</strong>
+          <small>
+            {data
+              ? `unread ${data.totals.unread_count_total} / delivered-unread ${data.totals.delivered_unread_total} / stuck-sent ${data.totals.stuck_sent_total} / legacy ${data.totals.legacy_inconsistent_total} / push-badge ${data.totals.worker_badge_formula_total}`
+              : 'loading DB unread state...'}
+          </small>
+        </div>
+        <button disabled={loading || busy} onClick={() => void load()} title="Refresh diagnostics" type="button">
+          <RefreshCw aria-hidden="true" className={loading ? 'spin' : undefined} size={15} />
+        </button>
+        <button onClick={onClose} title="Close" type="button">
+          <X aria-hidden="true" size={16} />
+        </button>
+      </header>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflow: 'auto', padding: 12 }}>
+        {error ? <div className="console-error">{error}</div> : null}
+        {canRepair ? (
+          <button
+            className="console-secondary-button"
+            disabled={busy || loading}
+            onClick={() => void runRepair('all', 'mark_read_and_sync')}
+            type="button"
+          >
+            Clear offset for ALL conversations (mark stuck read + zero counters)
+          </button>
+        ) : (
+          <small>Repair capability is not available for this session (read-only view).</small>
+        )}
+        {loading ? <small>Loading...</small> : null}
+        {!loading && interestingConversations.length === 0 ? (
+          <small>All clean: no conversation contributes to the badge for this user.</small>
+        ) : null}
+        {interestingConversations.map((item) => (
+          <article
+            key={item.conversation_id}
+            style={{ border: '1px solid rgba(148,163,184,0.35)', borderRadius: 10, display: 'flex', flexDirection: 'column', gap: 6, padding: 10 }}
+          >
+            <b>{item.counterparts.join(', ') || 'unknown counterpart'}</b>
+            <small style={{ opacity: 0.75 }}>{item.conversation_id}</small>
+            <small>
+              unread_count <b>{item.unread_count}</b>
+              {' · delivered-unread '}<b>{item.delivered_unread}</b>
+              {' · stuck-sent '}<b>{item.stuck_sent}</b>
+              {' · legacy '}<b>{item.legacy_inconsistent}</b>
+            </small>
+            {canRepair ? (
+              <span style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <button
+                  className="console-secondary-button"
+                  disabled={busy}
+                  onClick={() => void runRepair(item.conversation_id, 'mark_read_and_sync')}
+                  type="button"
+                >
+                  Mark read + zero
+                </button>
+                <input
+                  inputMode="numeric"
+                  onChange={(event) => setOverrideValues((prev) => ({ ...prev, [item.conversation_id]: event.target.value }))}
+                  placeholder="value"
+                  style={{ width: 64 }}
+                  value={overrideValues[item.conversation_id] ?? ''}
+                />
+                <button
+                  className="console-secondary-button"
+                  disabled={busy || !/^\d{1,3}$/.test(overrideValues[item.conversation_id] ?? '')}
+                  onClick={() => void runRepair(item.conversation_id, 'set_unread', Number(overrideValues[item.conversation_id]))}
+                  type="button"
+                >
+                  Override unread_count
+                </button>
+              </span>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
 function BannerTargetAvatar({ target, avatarUrl }: { target: UserOpsBannerTarget; avatarUrl?: string | null }) {
   const resolvedAvatarUrl = avatarUrl || target.avatar_url || null;
   return (
@@ -257,6 +415,7 @@ export default function UserOperationsPage({ canManageDevLog = false, canRepair 
   const [rowHeight, setRowHeight] = useState(58);
   const [bannerPanelRow, setBannerPanelRow] = useState<UserOpsRow | null>(null);
   const [devLogPanelRow, setDevLogPanelRow] = useState<UserOpsRow | null>(null);
+  const [unreadPanelRow, setUnreadPanelRow] = useState<UserOpsRow | null>(null);
   const [bannerPanel, setBannerPanel] = useState(DEFAULT_BANNER_PANEL);
   const [avatarUrlByPath, setAvatarUrlByPath] = useState<Record<string, string | null>>({});
   const [repairingTargetId, setRepairingTargetId] = useState<string | null>(null);
@@ -755,6 +914,7 @@ export default function UserOperationsPage({ canManageDevLog = false, canRepair 
                     loading,
                     openBannerList: setBannerPanelRow,
                     openDevLog: setDevLogPanelRow,
+                    openUnread: setUnreadPanelRow,
                   })}
                 </div>
               ))}
@@ -771,6 +931,15 @@ export default function UserOperationsPage({ canManageDevLog = false, canRepair 
       </div>
 
       {devLogPanelRow ? <DevLogCasePanel canManage={canManageDevLog} onClose={() => setDevLogPanelRow(null)} row={devLogPanelRow} /> : null}
+
+      {unreadPanelRow ? (
+        <UnreadDiagnosticsPanel
+          canRepair={canRepair}
+          onClose={() => setUnreadPanelRow(null)}
+          onRepaired={() => refreshUsers(page)}
+          row={unreadPanelRow}
+        />
+      ) : null}
 
       {bannerPanelRow ? (
         <aside
